@@ -1,0 +1,9 @@
+{
+    "llvm-target": "e2k-unknown-linux-gnu",
+    "arch": "elbrus",
+    "os": "none",
+    "executables": true,
+    "linker": "lcc",  
+    "panic-strategy": "abort",
+    "features": "+v3,+hwdiv"  
+}
