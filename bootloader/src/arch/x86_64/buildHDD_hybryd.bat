@@ -44,7 +44,10 @@ if errorlevel 1 (echo [ERROR] C compilation failed! & goto error)
 nasm -f elf32 "%SRC_DIR%\core_start.asm" -o "%BUILD_DIR%\start.o"
 if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 
-i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\kernel.o"
+nasm -f elf32 "%SRC_DIR%\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
+if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
+
+i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\kernel.o" "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Linking failed! & goto error)
 
 i686-elf-objcopy -O binary "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\kernel.bin"
