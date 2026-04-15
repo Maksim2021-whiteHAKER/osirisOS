@@ -28,12 +28,28 @@ struct idt_ptr
 struct idt_entry idt[256];
 struct idt_ptr idtp;
 static uint8_t crnt_attr = 0x0F;
+static uint8_t kbd_modifiers = 0; // хранилище состояния
+static int g_cursor_row = 0;
+static int g_cursor_col = 0;
+
 
 // константы видеопамяти
 #define VIDEO_MEM ((uint16_t*)0xA8000)  // сдвиг т.к не стандарт gdt 0x10000
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
 #define SCANCODE_ROW 24 // последняя строка (индексы 1920-1999) 
+
+#define SPECIAL_BACKSPACE -1
+#define SPECIAL_ENTER -2
+#define SPECIAL_ESC -3
+#define SPECIAL_TAB -4
+#define SPECIAL_CAPS_LOCK -5
+#define SPECIAL_NUM_LOCK -6
+#define SPECIAL_SPACE_BAR -7
+
+#define MOD_SHIFT 0x01 // бит 0: 0000 0001
+#define MOD_CTRL  0x02 // бит 1: 0000 0010
+#define MOD_ALT   0x04 // бит 2: 0000 0100
 
 // константы PIC, ICW
 #define PIC1_CMD 0x20
@@ -50,6 +66,7 @@ void print_string(const char* str);
 void print_uint(unsigned int num);
 void print_int_negat(int num);
 extern void load_idt(struct idt_ptr*);
+int scancode_to_char(uint8_t );
 
 // низкоуровневые помощники
 static inline void outb(uint16_t port, uint8_t val){
@@ -63,12 +80,21 @@ static inline uint8_t inb(uint16_t port){
 }
 
 // ===== КОНСОЛЬ: БАЗОВЫЕ ФУНКЦИИ =====
+void gotoxy(int col, int row){
+    if (row < 25 && col < 80){
+        g_cursor_col = col;
+        g_cursor_row = row;
+    }
+}
+
 // функция очистики экрана
 void clear_screen() {
     uint16_t* video = VIDEO_MEM;
     for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++){
         video[i] = (crnt_attr << 8) | ' ';
     }
+    g_cursor_col = 0;
+    g_cursor_row = 0;
 }
 
 void clear_row(int row){
@@ -95,45 +121,40 @@ void scroll_screen(){
 // Ядро консоли — определяется ПЕРВОЙ среди print_*
 // вывод одного символа
 void print_char(char c){
-    static int cursor_row = 0;
-    static int cursor_col = 0;
     switch (c){
         case '\n':
-        cursor_col = 0;
-        cursor_row++;
-        if (cursor_row >= 25) {
-            scroll_screen();
-            cursor_row = 24;
-        }
+        g_cursor_col = 0;
+        g_cursor_row++;
+        if (g_cursor_row >= 25) { scroll_screen(); g_cursor_row = 24; }
         return;
         case '\r':
-        cursor_col = 0;
-        return;
+            g_cursor_col = 0;
+            return;
         case '\t':
-        cursor_col += 4;
-        if (cursor_col >= 80){ 
-            cursor_col = 0;
-            cursor_row++;
-            if (cursor_row >= 25){
-                scroll_screen();
-                cursor_row = 24;
-                return;
-            }            
-        }
-        return;
+            g_cursor_col += 4;
+            if (g_cursor_col >= 80){ 
+                g_cursor_col = 0;
+                g_cursor_row++;
+                if (g_cursor_row >= 25){
+                    scroll_screen();
+                    g_cursor_row = 24;
+                    return;
+                }            
+            }
+            return;
     }
-    int i = (cursor_row * 80 + cursor_col);
-    uint16_t value = (crnt_attr << 8) | c; 
-    VIDEO_MEM[i] = value;
-    cursor_col++;
-    if (cursor_col >= 80){
-        cursor_col = 0;
-        cursor_row++;
+    int i = (g_cursor_row * 80 + g_cursor_col);
+    VIDEO_MEM[i] = (crnt_attr << 8) | c;
+
+    g_cursor_col++;
+    if (g_cursor_col >= 80){
+        g_cursor_col = 0;
+        g_cursor_row++;
     }
-    if (cursor_row >= 25){
+    if (g_cursor_row >= 25){
         scroll_screen();
-        cursor_row = 24;
-        cursor_col = 0;
+        g_cursor_row = 24;
+        g_cursor_col = 0;
     }   
 }
 
@@ -278,25 +299,93 @@ void pic_remap(){
 void irq_handler(int irq){
     if (irq == 1){
         // клава
-        uint8_t scancode = inb(0x60);
-        // вывод скан код в шестнадцатеричном виде например (в 1 строке)
-        static int col = 0;
-        char buf[4];
-        // преобразование байта в 2 шестнадцатеричных символа
-        const char hex[] = "0123456789ABCDEF";
-        buf[0] = hex[(scancode >> 4) & 0xF];
-        buf[1] = hex[scancode & 0xF];
-        buf[2] = ' ';
-        buf[3] = '\0';
-        for (int i = 0; buf[i]; i++){
-            VIDEO_MEM[SCANCODE_ROW * 80 + col++] = 0x0F00 | buf[i];
-            if (col >= 80) col = 0;
+        uint8_t sc = inb(0x60);
+        char c = scancode_to_char(sc);
+        if (c == SPECIAL_BACKSPACE){
+            if (g_cursor_col == 0 && g_cursor_row > 0){
+                g_cursor_row--;
+                g_cursor_col = 79;
+                VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
+            } else if (g_cursor_col > 0){
+                g_cursor_col--;
+                VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
+            }
+        } else if (c == SPECIAL_ENTER){
+            print_char('\n');
+        } else if (c == SPECIAL_TAB){
+            print_string("    ");
+        } else if (c == SPECIAL_SPACE_BAR) {
+            print_string(" ");
+        } else if (c > 0){
+            print_char(c);
         }
+        
+        // вывод скан код в шестнадцатеричном виде например (в 1 строке)
+        // static int col = 0;
+        // char buf[4];
+        // // преобразование байта в 2 шестнадцатеричных символа
+        // const char hex[] = "0123456789ABCDEF";
+        // buf[0] = hex[(sc >> 4) & 0xF];
+        // buf[1] = hex[sc & 0xF];
+        // buf[2] = ' ';
+        // buf[3] = '\0';
+        // for (int i = 0; buf[i]; i++){
+        //     VIDEO_MEM[SCANCODE_ROW * 80 + col++] = 0x0F00 | buf[i];
+        //     if (col >= 80) col = 0;
+        // }
     }
     // потверждение прерываний для PIC
     // EOI
     if (irq >= 8) outb(PIC2_CMD, 0x20);
     outb(PIC1_CMD, 0x20);
+}
+
+int scancode_to_char(uint8_t sc){ 
+    if (sc >= 0x80) return 0;
+ 
+    //  фильтр опускания
+    if (sc & 0x80){
+        uint8_t make = sc & 0x7F;
+        if (make == 0x2A || make == 0x36) kbd_modifiers &= ~MOD_SHIFT;
+        if (make == 0x1D) kbd_modifiers &= ~MOD_CTRL;
+        if (make == 0x38) kbd_modifiers &= ~MOD_ALT;
+        return 0;
+    }
+
+    switch (sc){
+        case 0x2A: case 0x36: kbd_modifiers |= MOD_SHIFT; return 0;
+        case 0x1D: kbd_modifiers |= MOD_CTRL; return 0;
+        case 0x38: kbd_modifiers |= MOD_ALT; return 0;
+
+        case 0x0E: return SPECIAL_BACKSPACE;
+        case 0x1C: return SPECIAL_ENTER;
+        case 0x1:  return SPECIAL_ESC;
+        case 0x0F: return SPECIAL_TAB;
+        case 0x3A: return SPECIAL_CAPS_LOCK;
+        case 0x45: return SPECIAL_NUM_LOCK;
+        case 0x39: return SPECIAL_SPACE_BAR;       
+    }
+
+    static const char kbd_us_normal[] = {
+        0, 0, '1','2','3','4','5','6','7','8','9','0','-','=',0,0,  // 0x00-0x0F
+        'q','w','e','r','t','y','u','i','o','p','[',']',0,0,      // 0x10-0x1F
+        'a','s','d','f','g','h','j','k','l',';',39,'`',0,'\\',    // 0x20-0x2F
+        'z','x','c','v','b','n','m',',','.','/',0,0,0,0,0,0,      // 0x30-0x3F
+    };
+    
+    static const char kbd_us_shift[] = {
+        0, 0, '!','@','#','$','%','^','&','*','(',')','_','+',0,0,
+        'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,
+        'A','S','D','F','G','H','J','K','L',':','"','~',0,'|',
+        'Z','X','C','V','B','N','M','<','>','?',0,0,0,0,0,0,
+    };
+
+    if (kbd_modifiers & MOD_SHIFT){
+        if (sc < sizeof(kbd_us_shift)) return kbd_us_shift[sc];
+    } else {
+        if (sc < sizeof(kbd_us_normal)) return kbd_us_normal[sc];
+    }
+    return 0;
 }
 
 // точка входа kernel_main
