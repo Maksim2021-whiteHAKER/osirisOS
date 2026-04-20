@@ -340,9 +340,7 @@ void irq_handler(int irq){
     outb(PIC1_CMD, 0x20);
 }
 
-int scancode_to_char(uint8_t sc){ 
-    if (sc >= 0x80) return 0;
- 
+int scancode_to_char(uint8_t sc){  
     //  фильтр опускания
     if (sc & 0x80){
         uint8_t make = sc & 0x7F;
@@ -416,7 +414,12 @@ void kernel_main() {
                 } else if (int_stringcmp(inputbuf, "clr") == 0){
                     clear_screen();
                 } else if (int_stringcmp(inputbuf, "help") == 0){
-                    print_string("Commands: clr, help, ver \n");              
+                    print_string("Commands: clr, help, ver \n"); 
+                } else if (input_len >= 4 && inputbuf[0] == 'e' && inputbuf[1] == 'c' && inputbuf[2] == 'h' && inputbuf[3] == 'o') {
+                    int offset = 4;
+                    if (input_len > 4 && inputbuf[4] == ' ') { offset = 5; };
+                    print_string(inputbuf + offset); 
+                    print_string("\n");
                 } else {
                     print_string("Neizvestnaya komanda: ");
                     print_string(inputbuf);
