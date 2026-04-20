@@ -34,7 +34,10 @@ static int g_cursor_col = 0;
 static char inputbuf[256];
 static int input_len = 0;
 static volatile int input_ready = 0;
-
+static char history[10][256]; // 10 команд по 256 сим.
+static int history_index = 0; // куда писать новую
+static int history_count = 0; // сколько всего записано
+static int history_pos = -1;
 
 // константы видеопамяти
 #define VIDEO_MEM ((uint16_t*)0xA8000)  // сдвиг т.к не стандарт gdt 0x10000
@@ -48,6 +51,8 @@ static volatile int input_ready = 0;
 #define SPECIAL_TAB -4
 #define SPECIAL_CAPS_LOCK -5
 #define SPECIAL_NUM_LOCK -6
+#define SPECIAL_ARROW_UP -7
+#define SPECIAL_ARROW_DOWN -8
 
 #define MOD_SHIFT 0x01 // бит 0: 0000 0001
 #define MOD_CTRL  0x02 // бит 1: 0000 0010
@@ -67,6 +72,7 @@ void print_char(char c);
 void print_string(const char* str);
 void print_uint(unsigned int num);
 void print_int_negat(int num);
+void string_copy(char*,const char*, int);
 extern void load_idt(struct idt_ptr*);
 int scancode_to_char(uint8_t );
 
@@ -105,7 +111,23 @@ void clear_row(int row){
         int idx = row * 80 + col;
         VIDEO_MEM[idx] = (crnt_attr << 8) | ' ';
     }
-    
+}
+
+void clear_input_line(){
+    clear_row(g_cursor_row);
+    g_cursor_col = 0;
+    print_char('>');
+    inputbuf[0] = '\0';
+    input_len = 0;
+}
+
+void load_history_line(int pos){
+    clear_input_line();
+    string_copy(inputbuf, history[pos], 256);
+    input_len = 0;
+    while (inputbuf[input_len] != '\0') input_len++;
+    print_string(inputbuf);
+    g_cursor_col = 1 + input_len;
 }
 
 void scroll_screen(){
@@ -167,6 +189,15 @@ void print_string(const char* str) {
         print_char(*str);
         str++;
     }
+}
+
+void string_copy(char* dest, const char* src, int max_len){
+    int i = 0;
+    while (i < max_len - 1 && src[i] != '\0'){
+        dest[i] = src[i];
+        i++;
+    }
+    dest[i] = '\0';
 }
 
 void print_uint(unsigned int num){
@@ -309,7 +340,29 @@ void irq_handler(int irq){
         uint8_t sc = inb(0x60);
         int c = scancode_to_char(sc);
         if (c == SPECIAL_ENTER){
+            if (input_len > 0){
+                string_copy(history[history_index], inputbuf, 256);
+                history_index = (history_index + 1) % 10;
+                if (history_count < 10) history_count++;
+                history_pos = -1;
+            }
             input_ready = 1;
+        } else if (c == SPECIAL_ARROW_UP){
+            if (history_count > 0){
+                history_pos++;
+                if (history_pos >= history_count) history_pos = history_count -1;
+                int real_idx = (history_index - 1 - history_pos + 10) % 10;
+                load_history_line(real_idx);
+            }
+        } else if (c == SPECIAL_ARROW_DOWN){
+            if (history_pos > 0){
+                history_pos--;
+                int real_idx = (history_index - 1 - history_pos + 10) % 10;
+                load_history_line(real_idx);
+            } else if (history_pos == 0){
+                history_pos--;
+                clear_input_line();
+            }
         } else if (c == SPECIAL_BACKSPACE){
             if (input_len > 0){
                 input_len--;
@@ -361,6 +414,8 @@ int scancode_to_char(uint8_t sc){
         case 0x0F: return SPECIAL_TAB;
         case 0x3A: return SPECIAL_CAPS_LOCK;
         case 0x45: return SPECIAL_NUM_LOCK;
+        case 0x48: return SPECIAL_ARROW_UP;
+        case 0x50: return SPECIAL_ARROW_DOWN;
         case 0x39: return ' ';
     }
 
@@ -414,7 +469,7 @@ void kernel_main() {
                 } else if (int_stringcmp(inputbuf, "clr") == 0){
                     clear_screen();
                 } else if (int_stringcmp(inputbuf, "help") == 0){
-                    print_string("Commands: clr, help, ver \n"); 
+                    print_string("Commands: clr, help, ver, echo \n"); 
                 } else if (input_len >= 4 && inputbuf[0] == 'e' && inputbuf[1] == 'c' && inputbuf[2] == 'h' && inputbuf[3] == 'o') {
                     int offset = 4;
                     if (input_len > 4 && inputbuf[4] == ' ') { offset = 5; };
