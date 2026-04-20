@@ -54,6 +54,12 @@ static int history_pos = -1;
 #define SPECIAL_ARROW_UP -7
 #define SPECIAL_ARROW_DOWN -8
 
+#define BLACK_ATTR  0x00
+#define FG_WHITE  0x0F
+#define FG_RED    0x0C
+#define FG_YELLOW 0x0E
+#define FG_CYAN   0x0B
+
 #define MOD_SHIFT 0x01 // бит 0: 0000 0001
 #define MOD_CTRL  0x02 // бит 1: 0000 0010
 #define MOD_ALT   0x04 // бит 2: 0000 0100
@@ -88,6 +94,12 @@ static inline uint8_t inb(uint16_t port){
 }
 
 // ===== КОНСОЛЬ: БАЗОВЫЕ ФУНКЦИИ =====
+void set_color(uint8_t fg, uint8_t bg){
+    crnt_attr = (bg << 4) | (fg & 0x0F);
+}
+
+void reset_color() { set_color(FG_WHITE, BLACK_ATTR); }
+
 void gotoxy(int col, int row){
     if (row < 25 && col < 80){
         g_cursor_col = col;
@@ -116,7 +128,10 @@ void clear_row(int row){
 void clear_input_line(){
     clear_row(g_cursor_row);
     g_cursor_col = 0;
+    uint8_t saved_attr = crnt_attr;
+    set_color(FG_CYAN, BLACK_ATTR);
     print_char('>');
+    crnt_attr = saved_attr;
     inputbuf[0] = '\0';
     input_len = 0;
 }
@@ -446,6 +461,7 @@ void kernel_main() {
     // очищаем экран
     clear_screen();
     // вывод сообщения
+    set_color(FG_WHITE, BLACK_ATTR);
     print_string("OSIRIS kernel v1.0 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
@@ -454,8 +470,10 @@ void kernel_main() {
     set_idt_gate(0x21, (uint32_t)irq1, 0x08, 0x8E);
     // ... для всех до 0x2F
     pic_remap();
-    printf("IDT and PIC configured. Enabling interrupts...\n");
+    printf("IDT and PIC configured Enabling interrupts...\n");
+    set_color(FG_CYAN, BLACK_ATTR);
     print_char('>');
+    reset_color();
     asm volatile("sti");
     // бесконечный цикл
     for (;;) {
@@ -476,13 +494,17 @@ void kernel_main() {
                     print_string(inputbuf + offset); 
                     print_string("\n");
                 } else {
+                    set_color(FG_RED, BLACK_ATTR);
                     print_string("Neizvestnaya komanda: ");
+                    reset_color();
                     print_string(inputbuf);
                     print_string("\n");
                 }
             }
             input_len = 0;
+            set_color(FG_CYAN, BLACK_ATTR);
             print_string(">");
+            reset_color();
         }
         asm volatile("hlt"); 
     }
