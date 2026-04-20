@@ -31,6 +31,9 @@ static uint8_t crnt_attr = 0x0F;
 static uint8_t kbd_modifiers = 0; // хранилище состояния
 static int g_cursor_row = 0;
 static int g_cursor_col = 0;
+static char inputbuf[256];
+static int input_len = 0;
+static volatile int input_ready = 0;
 
 
 // константы видеопамяти
@@ -45,7 +48,6 @@ static int g_cursor_col = 0;
 #define SPECIAL_TAB -4
 #define SPECIAL_CAPS_LOCK -5
 #define SPECIAL_NUM_LOCK -6
-#define SPECIAL_SPACE_BAR -7
 
 #define MOD_SHIFT 0x01 // бит 0: 0000 0001
 #define MOD_CTRL  0x02 // бит 1: 0000 0010
@@ -296,43 +298,41 @@ void pic_remap(){
     outb(PIC2_DATA, 0xFF); // маскируем всё
 }
 
+int int_stringcmp(const char* a, const char* b){
+    while (*a && *b && *a == *b) {a++; b++;}
+    return *a - *b;
+}
+
 void irq_handler(int irq){
     if (irq == 1){
         // клава
         uint8_t sc = inb(0x60);
-        char c = scancode_to_char(sc);
-        if (c == SPECIAL_BACKSPACE){
-            if (g_cursor_col == 0 && g_cursor_row > 0){
-                g_cursor_row--;
-                g_cursor_col = 79;
-                VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
-            } else if (g_cursor_col > 0){
-                g_cursor_col--;
+        int c = scancode_to_char(sc);
+        if (c == SPECIAL_ENTER){
+            input_ready = 1;
+        } else if (c == SPECIAL_BACKSPACE){
+            if (input_len > 0){
+                input_len--;
+                if (g_cursor_col == 0 && g_cursor_row > 0){
+                    g_cursor_row--;
+                    g_cursor_col = 79;                    
+                } else if (g_cursor_col > 0){
+                    g_cursor_col--;
+                }
                 VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
             }
-        } else if (c == SPECIAL_ENTER){
-            print_char('\n');
         } else if (c == SPECIAL_TAB){
             print_string("    ");
-        } else if (c == SPECIAL_SPACE_BAR) {
-            print_string(" ");
-        } else if (c > 0){
-            print_char(c);
-        }
+        } else if (c == ' '){
+            if (input_len < 255) inputbuf[input_len++] = ' ';
+            print_char(' ');            
         
-        // вывод скан код в шестнадцатеричном виде например (в 1 строке)
-        // static int col = 0;
-        // char buf[4];
-        // // преобразование байта в 2 шестнадцатеричных символа
-        // const char hex[] = "0123456789ABCDEF";
-        // buf[0] = hex[(sc >> 4) & 0xF];
-        // buf[1] = hex[sc & 0xF];
-        // buf[2] = ' ';
-        // buf[3] = '\0';
-        // for (int i = 0; buf[i]; i++){
-        //     VIDEO_MEM[SCANCODE_ROW * 80 + col++] = 0x0F00 | buf[i];
-        //     if (col >= 80) col = 0;
-        // }
+        } else if (c > 0 && c < 128){
+            if (input_len < 255){
+                inputbuf[input_len++] = c;
+                print_char(c);
+            }
+        }
     }
     // потверждение прерываний для PIC
     // EOI
@@ -363,21 +363,21 @@ int scancode_to_char(uint8_t sc){
         case 0x0F: return SPECIAL_TAB;
         case 0x3A: return SPECIAL_CAPS_LOCK;
         case 0x45: return SPECIAL_NUM_LOCK;
-        case 0x39: return SPECIAL_SPACE_BAR;       
+        case 0x39: return ' ';
     }
 
     static const char kbd_us_normal[] = {
         0, 0, '1','2','3','4','5','6','7','8','9','0','-','=',0,0,  // 0x00-0x0F
         'q','w','e','r','t','y','u','i','o','p','[',']',0,0,      // 0x10-0x1F
         'a','s','d','f','g','h','j','k','l',';',39,'`',0,'\\',    // 0x20-0x2F
-        'z','x','c','v','b','n','m',',','.','/',0,0,0,0,0,0,      // 0x30-0x3F
+        'z','x','c','v','b','n','m',',','.','/',0,' ',0,0,0,0,      // 0x30-0x3F
     };
     
     static const char kbd_us_shift[] = {
         0, 0, '!','@','#','$','%','^','&','*','(',')','_','+',0,0,
         'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,
         'A','S','D','F','G','H','J','K','L',':','"','~',0,'|',
-        'Z','X','C','V','B','N','M','<','>','?',0,0,0,0,0,0,
+        'Z','X','C','V','B','N','M','<','>','?',0,' ',0,0,0,0,
     };
 
     if (kbd_modifiers & MOD_SHIFT){
@@ -402,7 +402,30 @@ void kernel_main() {
     // ... для всех до 0x2F
     pic_remap();
     printf("IDT and PIC configured. Enabling interrupts...\n");
+    print_char('>');
     asm volatile("sti");
     // бесконечный цикл
-    for (;;) { asm volatile("hlt"); }
+    for (;;) {
+        if (input_ready){
+            input_ready = 0;
+            inputbuf[input_len] = '\0';
+            print_string("\n");
+            if (input_len > 0){
+                if (int_stringcmp(inputbuf, "ver") == 0){
+                    print_string("OSIRIS kernel v1.0 (C+asm)\n");
+                } else if (int_stringcmp(inputbuf, "clr") == 0){
+                    clear_screen();
+                } else if (int_stringcmp(inputbuf, "help") == 0){
+                    print_string("Commands: clr, help, ver \n");              
+                } else {
+                    print_string("Neizvestnaya komanda: ");
+                    print_string(inputbuf);
+                    print_string("\n");
+                }
+            }
+            input_len = 0;
+            print_string(">");
+        }
+        asm volatile("hlt"); 
+    }
 }
