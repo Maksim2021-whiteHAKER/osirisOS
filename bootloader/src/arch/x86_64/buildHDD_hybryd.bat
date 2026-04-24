@@ -38,7 +38,7 @@ if errorlevel 1 (echo [ERROR] Stage2 compilation failed! & goto error)
 dir "%BUILD_DIR%\stage2.bin" | find "stage2.bin"
 
 echo [3/5] Compiling hybrid kernel (C+asm)...
-i686-elf-gcc -c "%SRC_DIR%\kernel.c" -o "%BUILD_DIR%\kernel.o" -ffreestanding -nostdlib -O2 -fno-builtin
+i686-elf-gcc -c "%SRC_DIR%\kernel.c" -o "%BUILD_DIR%\kernel.o" -ffreestanding -nostdlib -O1 -fno-builtin -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-3dnow -mgeneral-regs-only
 if errorlevel 1 (echo [ERROR] C compilation failed! & goto error)
 
 nasm -f elf32 "%SRC_DIR%\core_start.asm" -o "%BUILD_DIR%\start.o"

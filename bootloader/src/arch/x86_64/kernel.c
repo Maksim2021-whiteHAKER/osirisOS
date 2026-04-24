@@ -9,6 +9,7 @@ typedef unsigned short uint16_t;
 typedef unsigned long uint32_t;
 
 #pragma pack(push, 1)
+__attribute__((aligned(8)))
 struct idt_entry
 {
     uint16_t base_low;
@@ -17,6 +18,9 @@ struct idt_entry
     uint8_t flags;
     uint16_t base_high;
 };
+#pragma pack(pop)
+
+#pragma pack(push, 1)
 struct idt_ptr
 {
     uint16_t limit;
@@ -25,6 +29,7 @@ struct idt_ptr
 #pragma pack(pop)
 
 // глоб переменные
+__attribute__((aligned(8))) 
 struct idt_entry idt[256];
 struct idt_ptr idtp;
 static uint8_t crnt_attr = 0x0F;
@@ -38,6 +43,25 @@ static char history[10][256]; // 10 команд по 256 сим.
 static int history_index = 0; // куда писать новую
 static int history_count = 0; // сколько всего записано
 static int history_pos = -1;
+static const char* commands[] = {"ver", "clr", "help", "echo", 0};
+// Статическая таблица для преобразования нибблов в символы (кэширование)
+static const char hex_char[16] = {
+    '0', '1', '2', '3', '4', '5', '6', '7',
+    '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
+};
+static const char kbd_us_normal[] = {
+    0, 0, '1','2','3','4','5','6','7','8','9','0','-','=',0,0,  // 0x00-0x0F
+    'q','w','e','r','t','y','u','i','o','p','[',']',0,0,      // 0x10-0x1F
+    'a','s','d','f','g','h','j','k','l',';',39,'`',0,'\\',    // 0x20-0x2F
+    'z','x','c','v','b','n','m',',','.','/',0,' ',0,0,0,0,      // 0x30-0x3F
+};
+
+static const char kbd_us_shift[] = {
+    0, 0, '!','@','#','$','%','^','&','*','(',')','_','+',0,0,
+    'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,
+    'A','S','D','F','G','H','J','K','L',':','"','~',0,'|',
+    'Z','X','C','V','B','N','M','<','>','?',0,' ',0,0,0,0,
+};
 
 // константы видеопамяти
 #define VIDEO_MEM ((uint16_t*)0xA8000)  // сдвиг т.к не стандарт gdt 0x10000
@@ -80,7 +104,10 @@ void print_uint(unsigned int num);
 void print_int_negat(int num);
 void string_copy(char*,const char*, int);
 extern void load_idt(struct idt_ptr*);
-int scancode_to_char(uint8_t );
+int scancode_to_char(uint8_t);
+int start_with(const char* str, const char* prefix);
+int find_and_complete(void);
+void redraw_input(void);
 
 // низкоуровневые помощники
 static inline void outb(uint16_t port, uint8_t val){
@@ -153,8 +180,7 @@ void scroll_screen(){
             VIDEO_MEM[dst_idx] = VIDEO_MEM[src_idx];
         }
     }
-    clear_row(24);
-    
+    clear_row(24);   
 }
 
 // Ядро консоли — определяется ПЕРВОЙ среди print_*
@@ -242,12 +268,6 @@ void print_int_negat(int num){
 
 // вывод в шестнадцетеричном виде
 void print_hex(unsigned int num){
-    // Статическая таблица для преобразования нибблов в символы (кэширование)
-    static const char hex_char[16] = {
-        '0', '1', '2', '3', '4', '5', '6', '7',
-        '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
-    };
-
     // буфер для вывода только цифры
     char buffer[8];
     int pos = 0;
@@ -307,6 +327,56 @@ void printf(const char* fmt, ...){
     }
     
     va_end(args);
+}
+
+int find_and_complete(){
+    inputbuf[input_len] = '\0'; 
+    int match_count = 0;
+    int match_last_index = -1;
+    for (int i = 0; commands[i] != 0; i++){
+        if (start_with(commands[i], inputbuf)){
+            match_count++;
+            match_last_index = i;
+        }        
+    }
+    if (match_count == 0) return 0;
+
+    if (match_count == 1){
+        const char* full_cmd = commands[match_last_index];
+        string_copy(inputbuf, full_cmd, 256);
+        
+        input_len = 0;
+        while (inputbuf[input_len] != '\0') input_len++;
+        redraw_input();
+    } else if (match_count > 1){
+        print_string("\n");
+        for (int i = 0; commands[i] != 0; i++){
+            if (start_with(commands[i], inputbuf)){
+                print_string(commands[i]);
+                print_string("  ");
+            }
+        }
+        print_string("\n");
+        redraw_input();
+    }
+    return 0;
+}
+
+int start_with(const char* str, const char* prefix){
+    while (*prefix){
+        if (*str++ != *prefix++) return 0;
+    }
+    return 1;
+}
+
+void redraw_input(){
+    clear_row(g_cursor_row);
+    g_cursor_col = 0;
+    set_color(FG_CYAN, BLACK_ATTR);
+    print_char('>');
+    reset_color();
+    print_string(inputbuf);
+    g_cursor_col = 1 + input_len;
 }
 
 // === ПРЕРЫВАНИЯ ===
@@ -390,7 +460,7 @@ void irq_handler(int irq){
                 VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
             }
         } else if (c == SPECIAL_TAB){
-            print_string("    ");
+            find_and_complete();
         } else if (c == ' '){
             if (input_len < 255) inputbuf[input_len++] = ' ';
             print_char(' ');            
@@ -434,20 +504,6 @@ int scancode_to_char(uint8_t sc){
         case 0x39: return ' ';
     }
 
-    static const char kbd_us_normal[] = {
-        0, 0, '1','2','3','4','5','6','7','8','9','0','-','=',0,0,  // 0x00-0x0F
-        'q','w','e','r','t','y','u','i','o','p','[',']',0,0,      // 0x10-0x1F
-        'a','s','d','f','g','h','j','k','l',';',39,'`',0,'\\',    // 0x20-0x2F
-        'z','x','c','v','b','n','m',',','.','/',0,' ',0,0,0,0,      // 0x30-0x3F
-    };
-    
-    static const char kbd_us_shift[] = {
-        0, 0, '!','@','#','$','%','^','&','*','(',')','_','+',0,0,
-        'Q','W','E','R','T','Y','U','I','O','P','{','}',0,0,
-        'A','S','D','F','G','H','J','K','L',':','"','~',0,'|',
-        'Z','X','C','V','B','N','M','<','>','?',0,' ',0,0,0,0,
-    };
-
     if (kbd_modifiers & MOD_SHIFT){
         if (sc < sizeof(kbd_us_shift)) return kbd_us_shift[sc];
     } else {
@@ -483,11 +539,13 @@ void kernel_main() {
             print_string("\n");
             if (input_len > 0){
                 if (int_stringcmp(inputbuf, "ver") == 0){
-                    print_string("OSIRIS kernel v1.0 (C+asm)\n");
+                    print_string("OSIRIS kernel v1.0.1 (C+asm)\n");
                 } else if (int_stringcmp(inputbuf, "clr") == 0){
                     clear_screen();
                 } else if (int_stringcmp(inputbuf, "help") == 0){
-                    print_string("Commands: clr, help, ver, echo \n"); 
+                    print_string("Commands: clr, help, ");
+                    print_string("ver, echo");
+                    print_string("\n");
                 } else if (input_len >= 4 && inputbuf[0] == 'e' && inputbuf[1] == 'c' && inputbuf[2] == 'h' && inputbuf[3] == 'o') {
                     int offset = 4;
                     if (input_len > 4 && inputbuf[4] == ' ') { offset = 5; };
