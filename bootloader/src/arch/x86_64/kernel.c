@@ -108,6 +108,7 @@ int scancode_to_char(uint8_t);
 int start_with(const char* str, const char* prefix);
 int find_and_complete(void);
 void redraw_input(void);
+void update_cursor(void);
 
 // низкоуровневые помощники
 static inline void outb(uint16_t port, uint8_t val){
@@ -142,6 +143,15 @@ void clear_screen() {
     }
     g_cursor_col = 0;
     g_cursor_row = 0;
+    update_cursor();
+}
+
+void update_cursor(void) {
+    uint16_t pos = g_cursor_row * 80 + g_cursor_col;
+    outb(0x3D4, 0x0F);
+    outb(0x3D5, (uint8_t)(pos & 0xFF));
+    outb(0x3D4, 0x0E);
+    outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
 }
 
 void clear_row(int row){
@@ -161,6 +171,7 @@ void clear_input_line(){
     crnt_attr = saved_attr;
     inputbuf[0] = '\0';
     input_len = 0;
+    update_cursor();
 }
 
 void load_history_line(int pos){
@@ -170,6 +181,7 @@ void load_history_line(int pos){
     while (inputbuf[input_len] != '\0') input_len++;
     print_string(inputbuf);
     g_cursor_col = 1 + input_len;
+    update_cursor();
 }
 
 void scroll_screen(){
@@ -180,7 +192,7 @@ void scroll_screen(){
             VIDEO_MEM[dst_idx] = VIDEO_MEM[src_idx];
         }
     }
-    clear_row(24);   
+    clear_row(24);
 }
 
 // Ядро консоли — определяется ПЕРВОЙ среди print_*
@@ -220,7 +232,8 @@ void print_char(char c){
         scroll_screen();
         g_cursor_row = 24;
         g_cursor_col = 0;
-    }   
+    }
+    update_cursor();
 }
 
 // === КОНСОЛЬ: ПРОДВИНУТЫЙ ВЫВОД ===
@@ -377,6 +390,7 @@ void redraw_input(){
     reset_color();
     print_string(inputbuf);
     g_cursor_col = 1 + input_len;
+    update_cursor();
 }
 
 // === ПРЕРЫВАНИЯ ===
@@ -458,6 +472,7 @@ void irq_handler(int irq){
                     g_cursor_col--;
                 }
                 VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
+                update_cursor();
             }
         } else if (c == SPECIAL_TAB){
             find_and_complete();
@@ -518,7 +533,7 @@ void kernel_main() {
     clear_screen();
     // вывод сообщения
     set_color(FG_WHITE, BLACK_ATTR);
-    print_string("OSIRIS kernel v1.0 (C+asm)\n");
+    print_string("OSIRIS kernel v1.0.1 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
     // Устанавливаем обработчики для IRQ0-15 (0x20-0x2F)
@@ -529,7 +544,7 @@ void kernel_main() {
     printf("IDT and PIC configured Enabling interrupts...\n");
     set_color(FG_CYAN, BLACK_ATTR);
     print_char('>');
-    reset_color();
+    reset_color();    
     asm volatile("sti");
     // бесконечный цикл
     for (;;) {
