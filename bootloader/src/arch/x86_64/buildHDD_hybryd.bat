@@ -11,6 +11,7 @@ set BUILD_DIR=..\..\..\build\x86_64
 set SRC_DIR=.
 set IMG_SIZE_MB=10
 set /a IMG_SECTORS=%IMG_SIZE_MB% * 2048
+set CFLAGS=-ffreestanding -nostdlib -O1 -fno-builtin -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-3dnow -mgeneral-regs-only -I%SRC_DIR%
 
 set STAGE1_SECTOR=0
 set STAGE2_SECTOR=1
@@ -28,26 +29,30 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%" 2>nul
 if errorlevel 1 (echo [ERROR] Cannot create build directory! & goto error)
 
 echo [1/5] Compiling stage1...
-nasm.exe -f bin "%SRC_DIR%\stage1.asm" -o "%BUILD_DIR%\stage1.bin"
+nasm.exe -f bin "%SRC_DIR%\boot\stage1.asm" -o "%BUILD_DIR%\stage1.bin"
 if errorlevel 1 (echo [ERROR] Stage1 compilation failed! & goto error)
 dir "%BUILD_DIR%\stage1.bin" | find "stage1.bin"
 
 echo [2/5] Compiling stage2...
-nasm.exe -f bin "%SRC_DIR%\stage2.asm" -o "%BUILD_DIR%\stage2.bin"
+nasm.exe -f bin "%SRC_DIR%\boot\stage2.asm" -o "%BUILD_DIR%\stage2.bin"
 if errorlevel 1 (echo [ERROR] Stage2 compilation failed! & goto error)
 dir "%BUILD_DIR%\stage2.bin" | find "stage2.bin"
 
 echo [3/5] Compiling hybrid kernel (C+asm)...
-i686-elf-gcc -c "%SRC_DIR%\kernel.c" -o "%BUILD_DIR%\kernel.o" -ffreestanding -nostdlib -O1 -fno-builtin -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-3dnow -mgeneral-regs-only
+i686-elf-gcc -c "%SRC_DIR%\core\main.c" -o "%BUILD_DIR%\main.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\shell.c" -o "%BUILD_DIR%\shell.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\console.c" -o "%BUILD_DIR%\console.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\keyboard.c" -o "%BUILD_DIR%\keyboard.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\idt.c" -o "%BUILD_DIR%\idt.o" %CFLAGS%
 if errorlevel 1 (echo [ERROR] C compilation failed! & goto error)
 
-nasm -f elf32 "%SRC_DIR%\core_start.asm" -o "%BUILD_DIR%\start.o"
+nasm -f elf32 "%SRC_DIR%\boot\core_start.asm" -o "%BUILD_DIR%\start.o"
 if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 
-nasm -f elf32 "%SRC_DIR%\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
+nasm -f elf32 "%SRC_DIR%\core\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 
-i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\kernel.o" "%BUILD_DIR%\interrupts.o"
+i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Linking failed! & goto error)
 
 i686-elf-objcopy -O binary "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\kernel.bin"
