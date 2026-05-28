@@ -4,8 +4,9 @@
 #include "idt.h"
 #include "keyboard.h"
 #include "shell.h"
+#include "timer.h"
 
-static const char* commands[] = {"ver", "clr", "help", "echo", 0};
+static const char* commands[] = {"ver", "clr", "help", "echo", "uptime", 0};
 
 static int int_stringcmp(const char* a, const char* b){
     while (*a && *b && *a == *b) {a++; b++;}
@@ -70,6 +71,7 @@ void shell_main() {
     set_color(FG_CYAN, BLACK_ATTR);
     print_char('>');
     reset_color();    
+    init_timer(100);
     asm volatile("sti");
     // print_string("IOPL set\n");
     // бесконечный цикл
@@ -92,6 +94,11 @@ void shell_main() {
                     if (input_len > 4 && inputbuf[4] == ' ') { offset = 5; };
                     print_string(inputbuf + offset); 
                     print_string("\n");
+                } else if (int_stringcmp(inputbuf, "uptime") == 0) {
+                    unsigned long seconds = get_ticks() / 100;
+                    print_string("Uptime: ");
+                    print_uint(seconds);
+                    print_string(" sec.\n");
                 } else {
                     set_color(FG_RED, BLACK_ATTR);
                     print_string("Neizvestnaya komanda: ");

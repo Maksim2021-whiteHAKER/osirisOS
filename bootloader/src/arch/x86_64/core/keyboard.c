@@ -3,6 +3,7 @@
 #include "keyboard.h"
 #include "console.h"
 #include "shell.h"
+#include "timer.h"
 
 uint8_t kbd_modifiers = 0;
 int ruskbd = 0;
@@ -34,6 +35,9 @@ static const unsigned char kbd_us_shift[64] = {
 };
 
 void irq_handler(int irq){
+    if (irq == 0){
+        timer_tick();
+    }
     if (irq == 1){
         // клава
         uint8_t sc = inb(0x60);

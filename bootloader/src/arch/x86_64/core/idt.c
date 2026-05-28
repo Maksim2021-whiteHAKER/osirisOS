@@ -1,6 +1,7 @@
 // x86_64/core/idt.c
 #include "../lib/common.h"
 #include "idt.h"
+#include "timer.h"
 
 __attribute__((aligned(8))) 
 struct idt_entry idt[256];
@@ -18,6 +19,7 @@ void init_idt(){
     idtp.limit = sizeof(idt) - 1;
     idtp.base = (uint32_t)&idt + 0x10000;
     for (int i = 0; i < 256; i++) set_idt_gate(i, 0, 0, 0);
+    outb(PIC1_DATA, 0xFC);
 
     // // Исключения (0–31)
     // set_idt_gate(0,  (uint32_t)isr0,  0x08, 0x8E);
@@ -66,6 +68,6 @@ void pic_remap(){
     outb(PIC1_DATA, ICW4_8086);
     outb(PIC2_DATA, ICW4_8086);
     // Маска: разрешаем только клаву (IRQ1)
-    outb(PIC1_DATA, 0xFD); // 11111101 (бит 1 = 0)
+    outb(PIC1_DATA, 0xFC); // 11111100 – разрешить IRQ0 (таймер) и IRQ1 (клавиатура)
     outb(PIC2_DATA, 0xFF); // маскируем всё
 }

@@ -10,7 +10,7 @@ echo.
 set BUILD_DIR=..\..\..\build\x86_64
 set SRC_DIR=.
 set IMG_SIZE_MB=10
-set /a IMG_SECTORS=%IMG_SIZE_MB% * 2048
+set IMG_SECTORS=%IMG_SIZE_MB% * 2048
 set CFLAGS=-ffreestanding -nostdlib -O1 -fno-builtin -mno-mmx -mno-sse -mno-sse2 -mno-sse3 -mno-3dnow -mgeneral-regs-only -I%SRC_DIR%
 
 set STAGE1_SECTOR=0
@@ -44,6 +44,7 @@ i686-elf-gcc -c "%SRC_DIR%\core\shell.c" -o "%BUILD_DIR%\shell.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\console.c" -o "%BUILD_DIR%\console.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\keyboard.c" -o "%BUILD_DIR%\keyboard.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\idt.c" -o "%BUILD_DIR%\idt.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\timer.c" -o "%BUILD_DIR%\timer.o" %CFLAGS%
 if errorlevel 1 (echo [ERROR] C compilation failed! & goto error)
 
 nasm -f elf32 "%SRC_DIR%\boot\core_start.asm" -o "%BUILD_DIR%\start.o"
@@ -52,7 +53,7 @@ if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 nasm -f elf32 "%SRC_DIR%\core\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 
-i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\interrupts.o"
+i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\timer.o" "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Linking failed! & goto error)
 
 i686-elf-objcopy -O binary "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\kernel.bin"
