@@ -5,7 +5,7 @@
 ; константы
 STAGE2_SEG equ 0x1000 ; сегмент куда грузим stage2
 STAGE2_OFF equ 0x0000 ; смещение
-STAGE2_SECTORS equ 4  ; сколько секторов занимает stage2
+STAGE2_SECTORS equ 15 ; сколько секторов занимает stage2 (теперь вместе со шрифтом CP866)
 START_SECTOR equ 2    ; первый сектор stage2 (секторы нумеруются с 1)
 
 boot:
@@ -17,17 +17,21 @@ boot:
     mov sp, 0x7C00
     sti
 
+    ; BIOS передаёт номер загрузочного диска в DL - сохраняем его
+    ; в свободную память 0x0000:0x0500, stage2 потом прочитает
+    mov [0x0500], dl
+
     mov si, msg_bootloader
     call print_str
 
-    ; загрузка stage2
+    ; загрузка stage2 (14 секторов подряд, S2-S15, в пределах дорожки 0)
     mov ax, STAGE2_SEG
     mov es, ax ; ES:BX - буфер обмена
     mov bx, STAGE2_OFF
     mov cl, START_SECTOR ; начальный сектор (CHS: номер сектора)
     xor ch, ch ; цилиндр 0
     xor dh, dh ; голова 0
-    mov dl, 0x80 ; (0x80 - жд, 0x00 - флоппи)
+    mov dl, [0x0500] ; загрузочный диск, который запомнили
 
     mov si, STAGE2_SECTORS ; кол. сект. для чтения
 

@@ -17,7 +17,10 @@ void set_idt_gate(uint8_t num, uint32_t base, uint16_t selector, uint8_t flags){
 
 void init_idt(){
     idtp.limit = sizeof(idt) - 1;
-    idtp.base = (uint32_t)&idt + 0x10000;
+    // IDTR-база - это ЛИНЕЙНЫЙ адрес. Ядро скомпоновано на 0x20000 и
+    // загружено ровно туда же, сегменты плоские, поэтому + 0x10000
+    // (компенсация старой сдвинутой GDT) больше не нужна
+    idtp.base = (uint32_t)&idt;
     for (int i = 0; i < 256; i++) set_idt_gate(i, 0, 0, 0);
     outb(PIC1_DATA, 0xFC);
 

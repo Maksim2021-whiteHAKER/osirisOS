@@ -5,15 +5,15 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-typedef unsigned char uint8_t;
-typedef unsigned short uint16_t;
-typedef unsigned long uint32_t;
+// uint8_t/uint16_t/uint32_t берутся из <stdint.h> (freestanding-заголовок gcc)
 
 // константы видеопамяти
-#define VIDEO_MEM ((uint16_t*)0xA8000)  // сдвиг т.к не стандарт gdt 0x10000
+// GDT теперь ПЛОСКАЯ (база сегментов = 0), поэтому адрес честный:
+// линейный адрес = физический, видеопамять по стандарту на 0xB8000
+#define VIDEO_MEM ((uint16_t*)0xB8000)
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
-#define SCANCODE_ROW 24 // последняя строка (индексы 1920-1999) 
+#define SCANCODE_ROW 24 // последняя строка (индексы 1920-1999)
 
 #define SPECIAL_BACKSPACE -1
 #define SPECIAL_ENTER -2
@@ -32,7 +32,7 @@ typedef unsigned long uint32_t;
 
 #define MOD_SHIFT 0x01 // бит 0: 0000 0001
 #define MOD_CTRL  0x02 // бит 1: 0000 0010
-#define MOD_ALT   0x04 // бит 2: 0000 0100
+#define MOD_ALT  0x04 // бит 2: 0000 0100
 
 // константы PIC, ICW
 #define PIC1_CMD 0x20

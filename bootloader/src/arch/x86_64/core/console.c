@@ -1,4 +1,4 @@
-// x86_64/core/console.c 
+// x86_64/core/console.c
 #include "../lib/common.h"
 #include "console.h"
 
@@ -56,65 +56,11 @@ void scroll_screen(){
     clear_row(24);
 }
 
-static char translate_cp866_to_ascii(unsigned char cp866) {
-    switch (cp866) {
-        // Заглавные буквы (0x80–0x9F)
-        case 0x80: return 'A';   // А
-        case 0x81: return '6';   // Б
-        case 0x82: return 'B';   // В
-        case 0x83: return 'G';   // Г
-        case 0x84: return 'D';   // Д
-        case 0x85: return 'E';   // Е
-        case 0x86: return 'X';   // Ж (приблизительно)
-        case 0x87: return '3';   // З
-        case 0x88: return 'U';   // И
-        case 0x89: return 'U';   // Й
-        case 0x8A: return 'K';   // К
-        case 0x8B: return 'J';   // Л
-        case 0x8C: return 'M';   // М
-        case 0x8D: return 'H';   // Н
-        case 0x8E: return 'O';   // О
-        case 0x8F: return 'n';   // П (строчная n, т.к. нет аналога)
-        case 0x90: return 'P';   // Р
-        case 0x91: return 'C';   // С
-        case 0x92: return 'T';   // Т
-        case 0x93: return 'y';   // У (строчная y)
-        case 0x94: return 'F';   // Ф
-        case 0x95: return 'X';   // Х
-        case 0x96: return 'U';   // Ц
-        case 0x97: return '4';   // Ч
-        case 0x98: return 'W';   // Ш
-        case 0x99: return 'W';   // Щ
-        case 0x9A: return 'b';   // Ъ
-        case 0x9B: return 'b';   // Ы (можно 'Y', но b ближе)
-        case 0x9C: return 'b';   // Ь
-        case 0x9D: return 'E';   // Э
-        case 0x9E: return 'I';   // Ю (приблизительно)
-        case 0x9F: return 'R';   // Я (приблизительно)
-        // Строчные буквы (0xA0–0xAF) – для примера несколько
-        case 0xA0: return 'a';
-        case 0xA1: return 'b';
-        case 0xA2: return 'v';
-        case 0xA3: return 'g';
-        case 0xA4: return 'd';
-        case 0xA5: return 'e';
-        case 0xA6: return 'x';   // ж
-        case 0xA7: return 'z';   // з
-        case 0xA8: return 'u';   // и
-        case 0xA9: return 'u';   // й
-        case 0xAA: return 'k';
-        case 0xAB: return 'j';   // л
-        case 0xAC: return 'm';
-        case 0xAD: return 'h';   // н
-        case 0xAE: return 'o';
-        case 0xAF: return 'n';   // п
-        // Для остальных символов 0xB0–0xFF можно вернуть '?'
-        default: return '?';
-    }
-}
-
 // Ядро консоли — определяется ПЕРВОЙ среди print_*
 // вывод одного символа
+// Кодировка консоли - CP866 (как в DOS): stage2 заливает CP866-шрифт
+// в знакогенератор VGA, поэтому байты 0x80-0xAF / 0xE0-0xEF рисуются
+// русскими буквами как есть. Никакой транслитерации не нужно.
 void print_char(char c){
     switch (c){
         case '\n':
@@ -127,23 +73,19 @@ void print_char(char c){
             return;
         case '\t':
             g_cursor_col += 4;
-            if (g_cursor_col >= 80){ 
+            if (g_cursor_col >= 80){
                 g_cursor_col = 0;
                 g_cursor_row++;
                 if (g_cursor_row >= 25){
                     scroll_screen();
                     g_cursor_row = 24;
                     return;
-                }            
+                }
             }
             return;
     }
-    if ((unsigned char)c >= 0x80){
-        unsigned char uc = (unsigned char)c;
-        uc = translate_cp866_to_ascii((unsigned char)c);
-    }
     int i = (g_cursor_row * 80 + g_cursor_col);
-    VIDEO_MEM[i] = (crnt_attr << 8) | c;
+    VIDEO_MEM[i] = (uint16_t)((crnt_attr << 8) | (uint8_t)c);
 
     g_cursor_col++;
     if (g_cursor_col >= 80){
@@ -197,7 +139,7 @@ void print_hex(unsigned int num){
     // буфер для вывода только цифры
     char buffer[8];
     int pos = 0;
-    int printed = 0; // флаг: напечтали хоть один не нуль
+    int printed = 0; // флаг: напечатали хоть один не нуль
 
     for (int i = 7; i>=0; i--){
         int nibble = (num >> (i * 4)) & 0xF;
@@ -251,7 +193,7 @@ void printf(const char* fmt, ...){
         }
         fmt++;
     }
-    
+
     va_end(args);
 }
 

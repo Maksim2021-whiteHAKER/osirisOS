@@ -15,7 +15,7 @@ set CFLAGS=-ffreestanding -nostdlib -O1 -fno-builtin -mno-mmx -mno-sse -mno-sse2
 
 set STAGE1_SECTOR=0
 set STAGE2_SECTOR=1
-set KERNEL_SECTOR=5
+set KERNEL_SECTOR=16
 
 :: Проверка наличия инструментов
 where nasm.exe >nul 2>&1 || (echo [ERROR] NASM not found! & goto error)
@@ -23,6 +23,9 @@ where python.exe >nul 2>&1 || (echo [ERROR] Python not found! & goto error)
 where i686-elf-gcc >nul 2>&1 || (echo [ERROR] i686-elf-gcc not found! & goto error)
 where i686-elf-ld >nul 2>&1 || (echo [ERROR] i686-elf-ld not found! & goto error)
 where i686-elf-objcopy >nul 2>&1 || (echo [ERROR] i686-elf-objcopy not found! & goto error)
+
+:: Проверка наличия шрифта CP866 (нужен stage2)
+if not exist "%SRC_DIR%\boot\cp866_8x16.fnt" (echo [ERROR] boot\cp866_8x16.fnt not found! & goto error)
 
 :: Создание директории сборки
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%" 2>nul
@@ -33,7 +36,7 @@ nasm.exe -f bin "%SRC_DIR%\boot\stage1.asm" -o "%BUILD_DIR%\stage1.bin"
 if errorlevel 1 (echo [ERROR] Stage1 compilation failed! & goto error)
 dir "%BUILD_DIR%\stage1.bin" | find "stage1.bin"
 
-echo [2/5] Compiling stage2...
+echo [2/5] Compiling stage2 (со шрифтом CP866)...
 nasm.exe -f bin "%SRC_DIR%\boot\stage2.asm" -o "%BUILD_DIR%\stage2.bin"
 if errorlevel 1 (echo [ERROR] Stage2 compilation failed! & goto error)
 dir "%BUILD_DIR%\stage2.bin" | find "stage2.bin"
@@ -51,7 +54,7 @@ nasm -f elf32 "%SRC_DIR%\boot\core_start.asm" -o "%BUILD_DIR%\start.o"
 if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 
 nasm -f elf32 "%SRC_DIR%\core\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
-if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
+if errorlevel 1 (echo [ERROR] Assembly of interrupts.asm failed! & goto error)
 
 i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\timer.o" "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Linking failed! & goto error)
