@@ -13,3 +13,5 @@
 bootloader/src/arch/x86_64/*.bin
 bootloader/src/arch/x86_64/*.o
 bootloader/src/arch/x86_64/*.elf
+
+osirisOS\bootloader\src\arch\x86_64\nasm.exe

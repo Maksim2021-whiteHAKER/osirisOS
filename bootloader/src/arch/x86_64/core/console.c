@@ -246,3 +246,39 @@ void string_copy(char* dest, const char* src, int max_len){
     }
     dest[i] = '\0';
 }
+
+/* UTF-8 -> CP866, читает один символ и двигует указатель */
+static unsigned char utf8_to_cp866(const char **p)
+{
+    unsigned char c1 = (unsigned char)(*p)[0];
+    unsigned char c2;
+
+    if (c1 < 0x80) { (*p)++; return c1; }          /* ASCII */
+    if ((c1 & 0xE0) == 0xC0) {                     /* кириллица */
+        c2 = (unsigned char)(*p)[1];
+        (*p) += 2;
+        if (c1 == 0xD0) {
+            if (c2 == 0x81) return 0xF0;                     /* Ё */
+            if (c2 >= 0x90 && c2 <= 0xBF) return c2 - 0x10;  /* А..п */
+        }
+        if (c1 == 0xD1) {
+            if (c2 == 0x91) return 0xF1;                     /* ё */
+            if (c2 >= 0x80 && c2 <= 0x8F) return c2 + 0x60;  /* р..я */
+        }
+    }
+    (*p)++;
+    return '?';
+}
+
+void utf8_to_cp866_str(const char *src, char *dst, int max_len ) {
+    int i = 0;
+    while (*src && i < max_len - 1) {
+        dst[i++] = (char)utf8_to_cp866(&src);
+    }
+    dst[i] = '\0';
+}
+
+void rus_print(const char *s)
+{
+    while (*s) print_char(utf8_to_cp866(&s));
+}

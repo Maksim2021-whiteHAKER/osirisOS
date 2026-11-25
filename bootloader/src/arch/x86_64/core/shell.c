@@ -6,7 +6,36 @@
 #include "shell.h"
 #include "timer.h"
 
-static const char* commands[] = {"ver", "clr", "help", "echo", "uptime", 0};
+/* ===== КОМАНДЫ =====
+   Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
+   Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
+static const char* commands[] = {
+    "ver", "clr", "help", "echo", "uptime",
+    "версия", "очистить", "помощь", "эхо", "время_работы",
+    0
+};
+
+#define CMD_VER    0
+#define CMD_CLR    1
+#define CMD_HELP   2
+#define CMD_ECHO   3
+#define CMD_UPTIME 4
+#define CMD_COUNT_EN 5      /* сколько команд в верхнем ряду */
+#define CMD_MAX      10     /* всего команд (лат + рус) */
+#define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
+
+/* CP866-копии команд: ввод с клавиатуры приходит в CP866,
+   сравнивать удобнее там же. Заполняются один раз при старте. */
+static char cmd_cp866[CMD_MAX][CMD_BUF];
+static int  cmd_total = 0;
+
+static void init_commands_cp866(void){
+    cmd_total = 0;
+    while (commands[cmd_total] != 0 && cmd_total < CMD_MAX){
+        utf8_to_cp866_str(commands[cmd_total], cmd_cp866[cmd_total], CMD_BUF);
+        cmd_total++;
+    }
+}
 
 static int int_stringcmp(const char* a, const char* b){
     while (*a && *b && *a == *b) {a++; b++;}
@@ -20,12 +49,29 @@ int start_with(const char* str, const char* prefix){
     return 1;
 }
 
+/* точное совпадение ввода с командой; возвращает канонический номер 0..4 или -1 */
+static int find_command(const char* input){
+    for (int i = 0; i < cmd_total; i++){
+        if (int_stringcmp(input, cmd_cp866[i]) == 0){
+            return (i < CMD_COUNT_EN) ? i : i - CMD_COUNT_EN;
+        }
+    }
+    return -1;
+}
+
+/* длина префикса echo/эхо во вводе (0 = это не echo) */
+static int echo_prefix_len(const char* input){
+    if (start_with(input, "echo")) return 4;
+    if (start_with(input, cmd_cp866[CMD_ECHO + CMD_COUNT_EN])) return 3;
+    return 0;
+}
+
 int find_and_complete(){
     inputbuf[input_len] = '\0';
     int match_count = 0;
     int match_last_index = -1;
-    for (int i = 0; commands[i] != 0; i++){
-        if (start_with(commands[i], inputbuf)){
+    for (int i = 0; i < cmd_total; i++){
+        if (start_with(cmd_cp866[i], inputbuf)){
             match_count++;
             match_last_index = i;
         }
@@ -33,17 +79,15 @@ int find_and_complete(){
     if (match_count == 0) return 0;
 
     if (match_count == 1){
-        const char* full_cmd = commands[match_last_index];
-        string_copy(inputbuf, full_cmd, 256);
-
+        string_copy(inputbuf, cmd_cp866[match_last_index], 256);
         input_len = 0;
         while (inputbuf[input_len] != '\0') input_len++;
         redraw_input();
     } else if (match_count > 1){
         print_string("\n");
-        for (int i = 0; commands[i] != 0; i++){
-            if (start_with(commands[i], inputbuf)){
-                print_string(commands[i]);
+        for (int i = 0; i < cmd_total; i++){
+            if (start_with(cmd_cp866[i], inputbuf)){
+                rus_print(commands[i]);       /* UTF-8 оригинал — через конвертер */
                 print_string("  ");
             }
         }
@@ -55,19 +99,16 @@ int find_and_complete(){
 
 // точка входа shell_main
 void shell_main() {
-    // очищаем экран
+    init_commands_cp866();        /* русские команды -> CP866-копии, до sti! */
+
     clear_screen();
-    // вывод сообщения
     set_color(FG_WHITE, BLACK_ATTR);
-    print_string("OSIRIS kernel v1.0.2 (C+asm)\n");
-    // консоль теперь в CP866 - русский текст печатается как есть
-    print_string("\x8F\xE0\xA8\xA2\xA5\xE2! \x90\xE3\xE1\xE1\xAA\xA8\xA9 \xEF\xA7\xEB\xAA \xE0\xA0\xA1\xAE\xE2\xA0\xA5\xE2.\n");
+    print_string("OSIRIS kernel v1.0.3 (C+asm)\n");
+    rus_print("Здравствуй! русская консоль работает \n");
     printf("Setting up IDT...\n");
     init_idt();
-    // Устанавливаем обработчики для IRQ0-15 (0x20-0x2F)
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
     set_idt_gate(0x21, (uint32_t)irq1, 0x08, 0x8E);
-    // ... для всех до 0x2F
     pic_remap();
     printf("IDT and PIC configured Enabling interrupts...\n");
     set_color(FG_CYAN, BLACK_ATTR);
@@ -75,35 +116,37 @@ void shell_main() {
     reset_color();
     init_timer(100);
     asm volatile("sti");
-    // print_string("IOPL set\n");
-    // бесконечный цикл
+
     for (;;) {
         if (input_ready){
             input_ready = 0;
             inputbuf[input_len] = '\0';
             print_string("\n");
             if (input_len > 0){
-                if (int_stringcmp(inputbuf, "ver") == 0){
-                    print_string("OSIRIS kernel v1.0.2 (C+asm)\n");
-                } else if (int_stringcmp(inputbuf, "clr") == 0){
-                    clear_screen();
-                } else if (int_stringcmp(inputbuf, "help") == 0){
-                    print_string("Commands: clr, help, ");
-                    print_string("ver, echo, uptime\n");
-                    print_string("(\xE0\xE3\xE1/\xA0\xAD\xA3\xAB: Caps Lock)\n");
-                } else if (input_len >= 4 && inputbuf[0] == 'e' && inputbuf[1] == 'c' && inputbuf[2] == 'h' && inputbuf[3] == 'o') {
-                    int offset = 4;
-                    if (input_len > 4 && inputbuf[4] == ' ') { offset = 5; };
+                int cmd = find_command(inputbuf);
+                int ep  = echo_prefix_len(inputbuf);
+
+                if (ep > 0){                        /* echo / эхо */
+                    int offset = ep;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
                     print_string(inputbuf + offset);
                     print_string("\n");
-                } else if (int_stringcmp(inputbuf, "uptime") == 0) {
+                } else if (cmd == CMD_VER){         /* ver / версия */
+                    print_string("OSIRIS kernel v1.0.3 (C+asm)\n");
+                } else if (cmd == CMD_CLR){         /* clr / очистить */
+                    clear_screen();
+                } else if (cmd == CMD_HELP){        /* help / помощь */
+                    print_string("Commands: clr, help, ver, echo, uptime\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы\n");
+                    rus_print("(Рус/Англ: Caps Lock)\n");
+                } else if (cmd == CMD_UPTIME){      /* uptime / аптайм */
                     unsigned long seconds = get_ticks() / 100;
                     print_string("Uptime: ");
                     print_uint(seconds);
                     print_string(" sec.\n");
                 } else {
                     set_color(FG_RED, BLACK_ATTR);
-                    print_string("\x8D\xA5\xA8\xA7\xA2\xA5\xE1\xE2\xAD\xA0\xEF \xAA\xAE\xAC\xA0\xAD\xA4\xA0: ");
+                    rus_print("Неизвестная команда: ");
                     reset_color();
                     print_string(inputbuf);
                     print_string("\n");

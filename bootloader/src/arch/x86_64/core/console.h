@@ -28,5 +28,7 @@ void print_hex(unsigned int num);
 void printf(const char* fmt, ...);
 void redraw_input(void);
 void update_cursor(void);
+void rus_print(const char *s);
+void utf8_to_cp866_str(const char *src, char *dst, int max_len);
 
 #endif
