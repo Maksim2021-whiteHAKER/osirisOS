@@ -11,8 +11,8 @@
    Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
-    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write",
-    "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать",
+    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete",
+    "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить",
     0
 };
 
@@ -24,8 +24,9 @@ static const char* commands[] = {
 #define CMD_LS     5
 #define CMD_CAT    6
 #define CMD_WRITE  7
-#define CMD_COUNT_EN 8      /* сколько команд в верхнем ряду */
-#define CMD_MAX      16     /* всего команд (лат + рус) */
+#define CMD_DELETE 8
+#define CMD_COUNT_EN 9      /* сколько команд в верхнем ряду */
+#define CMD_MAX      18     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
@@ -53,7 +54,7 @@ int start_with(const char* str, const char* prefix){
     return 1;
 }
 
-/* точное совпадение ввода с командой; возвращает канонический номер 0..7 или -1 */
+/* точное совпадение ввода с командой; возвращает канонический номер 0..8 или -1 */
 static int find_command(const char* input){
     for (int i = 0; i < cmd_total; i++){
         if (int_stringcmp(input, cmd_cp866[i]) == 0){
@@ -81,6 +82,13 @@ static int cat_prefix_len(const char* input){
 static int write_prefix_len(const char* input){
     if (start_with(input, "write")) return 5;
     if (start_with(input, cmd_cp866[CMD_WRITE + CMD_COUNT_EN])) return 8;
+    return 0;
+}
+
+/* длина префикса delete/удалить во вводе (0 = это не delete) */
+static int delete_prefix_len(const char* input){
+    if (start_with(input, "delete")) return 6;
+    if (start_with(input, cmd_cp866[CMD_DELETE + CMD_COUNT_EN])) return 7;
     return 0;
 }
 
@@ -121,7 +129,7 @@ void shell_main() {
 
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    print_string("OSIRIS kernel v1.0.5 (C+asm)\n");
+    print_string("OSIRIS kernel v1.0.6 (C+asm)\n");
     rus_print("Здравствуй! русская консоль работает \n");
     printf("Setting up IDT...\n");
     init_idt();
@@ -157,6 +165,7 @@ void shell_main() {
                 int ep  = echo_prefix_len(inputbuf);
                 int cp  = cat_prefix_len(inputbuf);
                 int wp  = write_prefix_len(inputbuf);
+                int dp  = delete_prefix_len(inputbuf);
 
                 if (ep > 0){                        /* echo / эхо */
                     int offset = ep;
@@ -218,13 +227,38 @@ void shell_main() {
                             reset_color();
                         }
                     }
+                } else if (cmd == CMD_DELETE && dp == 0){  /* delete / удалить без имени */
+                    rus_print("Использование: удалить имя_файла\n");
+                } else if (dp > 0){                  /* delete / удалить + имя */
+                    int offset = dp;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    if (offset >= input_len){
+                        rus_print("Использование: удалить имя_файла\n");
+                    } else {
+                        int dres = ofs_delete(inputbuf + offset);
+                        if (dres >= 0){
+                            set_color(FG_CYAN, BLACK_ATTR);
+                            rus_print("удалено: ");
+                            reset_color();
+                            print_string(inputbuf + offset);
+                            rus_print(" (");
+                            print_uint((unsigned int)dres);
+                            rus_print(" байт)\n");
+                        } else {
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("файл не найден: ");
+                            reset_color();
+                            print_string(inputbuf + offset);
+                            print_string("\n");
+                        }
+                    }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    print_string("OSIRIS kernel v1.0.5 (C+asm)\n");
+                    print_string("OSIRIS kernel v1.0.6 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать\n");
+                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить\n");
                     rus_print("(Рус/Англ: Caps Lock)\n");
                 } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;

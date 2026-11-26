@@ -1,5 +1,5 @@
 // x86_64/core/ofs.c
-// ОФС - Осирис Файловая Система. Этап 2: чтение и запись.
+// ОФС - Осирис Файловая Система. Этап 3: чтение, запись, удаление.
 // Файлы лежат в области данных ПОДРЯД от своего стартового блока
 // (без цепочек - как FAT, только проще). Имена хранятся на диске в UTF-8,
 // на экране и во вводе - CP866, конвертация через console.c.
@@ -129,7 +129,7 @@ uint32_t ofs_free_blocks(void){
     return free_n;
 }
 
-/* ===== запись (этап 2) ===== */
+/* ===== запись и удаление (этапы 2-3) ===== */
 
 // аллокатор: найти подряд need свободных блоков (first-fit);
 // возвращает номер первого блока или (uint32_t)-1, если места нет
@@ -255,4 +255,40 @@ int ofs_write(const char *name, const char *text){
         if (ofs_bitmap_flush(bmin, bmax - bmin) != 0) return -1;
     }
     return (int)size;
+}
+
+// удалить файл по имени. name - в CP866 (как с клавиатуры).
+// Порядок записи на диск: СНАЧАЛА таблица (файл исчезает), ПОТОМ битмап.
+// Если питание пропадёт между ними - место останется помеченным занятым
+// (утечка места), но чужие файлы не пострадают; обратный порядок дал бы
+// запись, указывающую на уже свободные блоки - это хуже.
+// возвращает размер удалённого файла или -1 (не готова / не найден)
+int ofs_delete(const char *name){
+    if (!ofs_ready) return -1;
+
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+
+        char name_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, name_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(name_cp, name) != 0) continue;
+
+        uint32_t size    = rd32(e + 48);
+        uint32_t start   = rd32(e + 52);
+        uint32_t nblocks = (size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+
+        // 1) убрать запись из таблицы (ОЗУ + сектор на диске)
+        for (int j = 0; j < OFS_ENTRY_SIZE; j++) e[j] = 0;
+        int tsec = (i * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+        if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0) return -1;
+
+        // 2) освободить блоки (ОЗУ + тронутые сектора битмапа на диск)
+        if (nblocks > 0){
+            ofs_mark(start, nblocks, 0);
+            if (ofs_bitmap_flush(start, nblocks) != 0) return -1;
+        }
+        return (int)size;
+    }
+    return -1;
 }
