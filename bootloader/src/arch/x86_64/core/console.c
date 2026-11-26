@@ -282,3 +282,36 @@ void rus_print(const char *s)
 {
     while (*s) print_char(utf8_to_cp866(&s));
 }
+
+/* CP866 -> UTF-8, один символ в буфер out; возвращает число байт (1..3).
+   Обратная к utf8_to_cp866: А-Я 0x80-0x9F, а-п 0xA0-0xAF -> D0 xx,
+   р-я 0xE0-0xEF -> D1 xx, Ё 0xF0 -> D0 81, ё 0xF1 -> D1 91, № 0xFC. */
+static int cp866_to_utf8(unsigned char c, char *out)
+{
+    if (c < 0x80) { out[0] = (char)c; return 1; }                        /* ASCII */
+    if (c <= 0x9F) { out[0] = (char)0xD0; out[1] = (char)(0x90 + c - 0x80); return 2; } /* А..Я */
+    if (c <= 0xAF) { out[0] = (char)0xD0; out[1] = (char)(0xB0 + c - 0xA0); return 2; } /* а..п */
+    if (c >= 0xE0 && c <= 0xEF) { out[0] = (char)0xD1; out[1] = (char)(0x80 + c - 0xE0); return 2; } /* р..я */
+    if (c == 0xF0) { out[0] = (char)0xD0; out[1] = (char)0x81; return 2; }  /* Ё */
+    if (c == 0xF1) { out[0] = (char)0xD1; out[1] = (char)0x91; return 2; }  /* ё */
+    if (c == 0xFC) { out[0] = (char)0xE2; out[1] = (char)0x84; out[2] = (char)0x96; return 3; } /* № */
+    out[0] = '?';
+    return 1;
+}
+
+/* CP866 -> UTF-8 строка. Возвращает число исходных символов CP866,
+   которые уместились: если меньше strlen(src) - строка обрезана. */
+int cp866_to_utf8_str(const char *src, char *dst, int max_len)
+{
+    int written = 0, chars = 0;
+    char tmp[4];
+    while (*src){
+        int n = cp866_to_utf8((unsigned char)*src, tmp);
+        if (written + n > max_len - 1) break;   /* символ целиком не влезает */
+        for (int i = 0; i < n; i++) dst[written++] = tmp[i];
+        chars++;
+        src++;
+    }
+    dst[written] = '\0';
+    return chars;
+}

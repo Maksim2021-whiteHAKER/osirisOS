@@ -30,5 +30,6 @@ void redraw_input(void);
 void update_cursor(void);
 void rus_print(const char *s);
 void utf8_to_cp866_str(const char *src, char *dst, int max_len);
+int cp866_to_utf8_str(const char *src, char *dst, int max_len);
 
 #endif
