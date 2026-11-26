@@ -5,13 +5,14 @@
 #include "keyboard.h"
 #include "shell.h"
 #include "timer.h"
+#include "ofs.h"
 
 /* ===== КОМАНДЫ =====
    Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
-    "ver", "clr", "help", "echo", "uptime",
-    "версия", "очистить", "помощь", "эхо", "время_работы",
+    "ver", "clr", "help", "echo", "uptime", "ls", "cat",
+    "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать",
     0
 };
 
@@ -20,8 +21,10 @@ static const char* commands[] = {
 #define CMD_HELP   2
 #define CMD_ECHO   3
 #define CMD_UPTIME 4
-#define CMD_COUNT_EN 5      /* сколько команд в верхнем ряду */
-#define CMD_MAX      10     /* всего команд (лат + рус) */
+#define CMD_LS     5
+#define CMD_CAT    6
+#define CMD_COUNT_EN 7      /* сколько команд в верхнем ряду */
+#define CMD_MAX      14     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
@@ -49,7 +52,7 @@ int start_with(const char* str, const char* prefix){
     return 1;
 }
 
-/* точное совпадение ввода с командой; возвращает канонический номер 0..4 или -1 */
+/* точное совпадение ввода с командой; возвращает канонический номер 0..6 или -1 */
 static int find_command(const char* input){
     for (int i = 0; i < cmd_total; i++){
         if (int_stringcmp(input, cmd_cp866[i]) == 0){
@@ -63,6 +66,13 @@ static int find_command(const char* input){
 static int echo_prefix_len(const char* input){
     if (start_with(input, "echo")) return 4;
     if (start_with(input, cmd_cp866[CMD_ECHO + CMD_COUNT_EN])) return 3;
+    return 0;
+}
+
+/* длина префикса cat/читать во вводе (0 = это не cat) */
+static int cat_prefix_len(const char* input){
+    if (start_with(input, "cat")) return 3;
+    if (start_with(input, cmd_cp866[CMD_CAT + CMD_COUNT_EN])) return 6;
     return 0;
 }
 
@@ -103,7 +113,7 @@ void shell_main() {
 
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    print_string("OSIRIS kernel v1.0.3 (C+asm)\n");
+    print_string("OSIRIS kernel v1.0.4 (C+asm)\n");
     rus_print("Здравствуй! русская консоль работает \n");
     printf("Setting up IDT...\n");
     init_idt();
@@ -111,6 +121,18 @@ void shell_main() {
     set_idt_gate(0x21, (uint32_t)irq1, 0x08, 0x8E);
     pic_remap();
     printf("IDT and PIC configured Enabling interrupts...\n");
+
+    /* подключаем ОФС (чтение суперблока и таблицы с диска через ATA) */
+    if (ofs_mount() == 0){
+        set_color(FG_CYAN, BLACK_ATTR);
+        rus_print("ОФС: подключена\n");
+        reset_color();
+    } else {
+        set_color(FG_RED, BLACK_ATTR);
+        rus_print("ОФС: не найдена (mkofs.py собирал образ?)\n");
+        reset_color();
+    }
+
     set_color(FG_CYAN, BLACK_ATTR);
     print_char('>');
     reset_color();
@@ -125,21 +147,40 @@ void shell_main() {
             if (input_len > 0){
                 int cmd = find_command(inputbuf);
                 int ep  = echo_prefix_len(inputbuf);
+                int cp  = cat_prefix_len(inputbuf);
 
                 if (ep > 0){                        /* echo / эхо */
                     int offset = ep;
                     if (input_len > offset && inputbuf[offset] == ' ') offset++;
                     print_string(inputbuf + offset);
                     print_string("\n");
+                } else if (cmd == CMD_LS){          /* ls / дир */
+                    ofs_list();
+                } else if (cmd == CMD_CAT && cp == 0){   /* cat / читать без имени */
+                    rus_print("Использование: читать имя_файла\n");
+                } else if (cp > 0){                 /* cat / читать + имя файла */
+                    int offset = cp;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    if (offset >= input_len){
+                        rus_print("Использование: читать имя_файла\n");
+                    } else if (ofs_read(inputbuf + offset) < 0){
+                        set_color(FG_RED, BLACK_ATTR);
+                        rus_print("файл не найден: ");
+                        reset_color();
+                        print_string(inputbuf + offset);
+                        print_string("\n");
+                    } else {
+                        print_string("\n");
+                    }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    print_string("OSIRIS kernel v1.0.3 (C+asm)\n");
+                    print_string("OSIRIS kernel v1.0.4 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы\n");
+                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать\n");
                     rus_print("(Рус/Англ: Caps Lock)\n");
-                } else if (cmd == CMD_UPTIME){      /* uptime / аптайм */
+                } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;
                     print_string("Uptime: ");
                     print_uint(seconds);

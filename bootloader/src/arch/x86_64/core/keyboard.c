@@ -87,15 +87,15 @@ void irq_handler(int irq){
         } else if (c == SPECIAL_CAPS_LOCK){
             ruskbd = !ruskbd;
             if (ruskbd){
-                rus_print("Рус: ВКЛ");   // "Рус: ВКЛ" (CP866)
-                print_char('\n');
-                redraw_input();
-                clear_input_line();
+                // rus_print("Рус: ВКЛ");   // "Рус: ВКЛ" (CP866)
+                // print_char('\n');
+                // redraw_input();
+                // clear_input_line();
             } else {
-                rus_print("Рус: ВЫКЛ"); // "Рус: ВЫКЛ" (CP866)
-                print_char('\n');
-                redraw_input();
-                clear_input_line();
+                // rus_print("Рус: ВЫКЛ"); // "Рус: ВЫКЛ" (CP866)
+                // print_char('\n');
+                // redraw_input();
+                // clear_input_line();
             }
         } else if (c == ' '){
             if (input_len < 255) inputbuf[input_len++] = ' ';

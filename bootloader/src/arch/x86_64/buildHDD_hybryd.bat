@@ -48,6 +48,8 @@ i686-elf-gcc -c "%SRC_DIR%\core\console.c" -o "%BUILD_DIR%\console.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\keyboard.c" -o "%BUILD_DIR%\keyboard.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\idt.c" -o "%BUILD_DIR%\idt.o" %CFLAGS%
 i686-elf-gcc -c "%SRC_DIR%\core\timer.c" -o "%BUILD_DIR%\timer.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\ata.c" -o "%BUILD_DIR%\ata.o" %CFLAGS%
+i686-elf-gcc -c "%SRC_DIR%\core\ofs.c" -o "%BUILD_DIR%\ofs.o" %CFLAGS%
 if errorlevel 1 (echo [ERROR] C compilation failed! & goto error)
 
 nasm -f elf32 "%SRC_DIR%\boot\core_start.asm" -o "%BUILD_DIR%\start.o"
@@ -56,7 +58,8 @@ if errorlevel 1 (echo [ERROR] Assembly of core_start.asm failed! & goto error)
 nasm -f elf32 "%SRC_DIR%\core\interrupts.asm" -o "%BUILD_DIR%\interrupts.o"
 if errorlevel 1 (echo [ERROR] Assembly of interrupts.asm failed! & goto error)
 
-i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\timer.o" "%BUILD_DIR%\interrupts.o"
+i686-elf-ld -T "%SRC_DIR%\linker.ld" -o "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\start.o" "%BUILD_DIR%\main.o" "%BUILD_DIR%\shell.o" "%BUILD_DIR%\console.o" "%BUILD_DIR%\keyboard.o" "%BUILD_DIR%\idt.o" "%BUILD_DIR%\timer.o" "%BUILD_DIR%\ata.o" "%BUILD_DIR%\ofs.o" "%BUILD_DIR%\interrupts.o"
+
 if errorlevel 1 (echo [ERROR] Linking failed! & goto error)
 
 i686-elf-objcopy -O binary "%BUILD_DIR%\kernel.elf" "%BUILD_DIR%\kernel.bin"
@@ -78,6 +81,10 @@ if errorlevel 1 (echo [ERROR] Failed to write stage2! & goto error)
 echo Writing kernel to sector %KERNEL_SECTOR%...
 python -c "img=open(r'%BUILD_DIR%\osiris.img', 'r+b'); img.seek(%KERNEL_SECTOR%*512); img.write(open(r'%BUILD_DIR%\kernel.bin', 'rb').read()); img.close()"
 if errorlevel 1 (echo [ERROR] Failed to write kernel! & goto error)
+
+echo Writing OFS filesystem...
+python "%SRC_DIR%\mkofs.py" "%BUILD_DIR%\osiris.img" "%SRC_DIR%\fsroot" --demo
+if errorlevel 1 (echo [ERROR] mkofs failed! & goto error)
 
 echo [5/5] Verifying boot signature...
 python -c "import struct; img=open(r'%BUILD_DIR%\osiris.img', 'rb'); img.seek(510); sig=struct.unpack('<H', img.read(2))[0]; exit(0 if sig==0xAA55 else 1)" >nul 2>&1
