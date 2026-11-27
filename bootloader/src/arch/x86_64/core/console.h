@@ -32,4 +32,13 @@ void rus_print(const char *s);
 void utf8_to_cp866_str(const char *src, char *dst, int max_len);
 int cp866_to_utf8_str(const char *src, char *dst, int max_len);
 
+void input_left(void);
+void input_right(void);
+void input_home(void);
+void input_end(void);
+
+void input_insert(char c);
+void input_delete(void);
+void input_backspace(void);
+
 #endif

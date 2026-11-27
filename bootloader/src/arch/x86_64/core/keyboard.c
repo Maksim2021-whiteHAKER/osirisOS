@@ -51,8 +51,8 @@ void irq_handler(int irq){
                 string_copy(history[history_index], inputbuf, 256);
                 history_index = (history_index + 1) % 10;
                 if (history_count < 10) history_count++;
-                history_pos = -1;
             }
+            history_pos = -1;
             input_ready = 1;
         } else if (c == SPECIAL_ARROW_UP){
             if (history_count > 0){
@@ -70,18 +70,18 @@ void irq_handler(int irq){
                 history_pos--;
                 clear_input_line();
             }
+        } else if (c == SPECIAL_ARROW_LEFT) {
+            input_left();            
+        } else if (c == SPECIAL_ARROW_RIGHT) {
+            input_right();   
+        } else if (c == SPECIAL_DELETE) {
+            input_delete();       
+        } else if (c == SPECIAL_HOME) {
+            input_home();
+        } else if (c == SPECIAL_END) {
+            input_end();                        
         } else if (c == SPECIAL_BACKSPACE){
-            if (input_len > 0){
-                input_len--;
-                if (g_cursor_col == 0 && g_cursor_row > 0){
-                    g_cursor_row--;
-                    g_cursor_col = 79;
-                } else if (g_cursor_col > 0){
-                    g_cursor_col--;
-                }
-                VIDEO_MEM[(g_cursor_row *80) + g_cursor_col] = (crnt_attr << 8) | ' ';
-                update_cursor();
-            }
+            input_backspace();
         } else if (c == SPECIAL_TAB){
             find_and_complete();
         } else if (c == SPECIAL_CAPS_LOCK){
@@ -97,14 +97,8 @@ void irq_handler(int irq){
                 // redraw_input();
                 // clear_input_line();
             }
-        } else if (c == ' '){
-            if (input_len < 255) inputbuf[input_len++] = ' ';
-            print_char(' ');
         } else if (c > 0){
-            if (input_len < 255){
-                inputbuf[input_len++] = c;
-                print_char(c);
-            }
+            input_insert(c);
         }
     }
     // потверждение прерываний для PIC
@@ -134,8 +128,14 @@ int scancode_to_char(uint8_t sc){
         case 0x0F: return SPECIAL_TAB;
         case 0x3A: return SPECIAL_CAPS_LOCK;
         case 0x45: return SPECIAL_NUM_LOCK;
+        case 0x47: return SPECIAL_HOME;
+        case 0x4F: return SPECIAL_END;
         case 0x48: return SPECIAL_ARROW_UP;
+        case 0x4B: return SPECIAL_ARROW_LEFT;
+        case 0x4D: return SPECIAL_ARROW_RIGHT;
         case 0x50: return SPECIAL_ARROW_DOWN;
+        case 0x52: return SPECIAL_INSERT;
+        case 0x53: return SPECIAL_DELETE;
         case 0x39: return ' ';
     }
 

@@ -173,10 +173,9 @@ static int parse_two_names(const char* in, int len, int offset, char* n1, char* 
 // точка входа shell_main
 void shell_main() {
     init_commands_cp866();        /* русские команды -> CP866-копии, до sti! */
-
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    rus_print("Ядро Осирис v1.1.0 (C+asm)\n");
+    rus_print("Ядро Осирис v1.1.3 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
@@ -500,7 +499,7 @@ void shell_main() {
                         reset_color();
                     }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    rus_print("Ядро Осирис v1.1.0 (C+asm)\n");
+                    rus_print("Ядро Осирис v1.1.3 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
@@ -520,10 +519,7 @@ void shell_main() {
                     print_string("\n");
                 }
             }
-            input_len = 0;
-            set_color(FG_CYAN, BLACK_ATTR);
-            print_string(">");
-            reset_color();
+            clear_input_line();
         }
         asm volatile("hlt");
     }

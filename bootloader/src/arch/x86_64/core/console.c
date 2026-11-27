@@ -12,6 +12,7 @@ char history[10][256];
 int history_index = 0;
 int history_count = 0;
 int history_pos = -1;
+static int input_pos = 0;
 
 // Статические переменные, видимые только внутри console.c
 static const char hex_char[16] = {
@@ -20,12 +21,11 @@ static const char hex_char[16] = {
 };
 
 // ===== КОНСОЛЬ: БАЗОВЫЕ ФУНКЦИИ =====
-void set_color(uint8_t fg, uint8_t bg){
+void set_color(uint8_t fg, uint8_t bg) {
     crnt_attr = (bg << 4) | (fg & 0x0F);
 }
 
 void reset_color() { set_color(FG_WHITE, BLACK_ATTR); }
-
 
 void clear_screen() {
     uint16_t* video = VIDEO_MEM;
@@ -37,7 +37,7 @@ void clear_screen() {
     update_cursor();
 }
 
-void clear_row(int row){
+void clear_row(int row) {
     for (int col = 0; col < 80; col++)
     {
         int idx = row * 80 + col;
@@ -45,7 +45,7 @@ void clear_row(int row){
     }
 }
 
-void scroll_screen(){
+void scroll_screen() {
     for (int row = 0; row < 24; row++){
         for (int col = 0; col < 80; col++){
             int dst_idx = row * 80 + col;
@@ -61,7 +61,7 @@ void scroll_screen(){
 // Кодировка консоли - CP866 (как в DOS): stage2 заливает CP866-шрифт
 // в знакогенератор VGA, поэтому байты 0x80-0xAF / 0xE0-0xEF рисуются
 // русскими буквами как есть. Никакой транслитерации не нужно.
-void print_char(char c){
+void print_char(char c) {
     switch (c){
         case '\n':
         g_cursor_col = 0;
@@ -109,7 +109,7 @@ void print_string(const char* str) {
     }
 }
 
-void print_uint(unsigned int num){
+void print_uint(unsigned int num) {
     if (num >= 10){
         print_uint(num / 10);
     }
@@ -117,7 +117,7 @@ void print_uint(unsigned int num){
 }
 
 // рекурсивный вывод
-void print_int(int num){
+void print_int(int num) {
     if (num < 0){
         print_char('-');
         print_int_negat(num);
@@ -127,7 +127,7 @@ void print_int(int num){
     return;
 }
 
-void print_int_negat(int num){
+void print_int_negat(int num) {
     if (num <= -10){
         print_int_negat(num / 10);
     }
@@ -135,7 +135,7 @@ void print_int_negat(int num){
 }
 
 // вывод в шестнадцетеричном виде
-void print_hex(unsigned int num){
+void print_hex(unsigned int num) {
     // буфер для вывода только цифры
     char buffer[8];
     int pos = 0;
@@ -160,7 +160,7 @@ void print_hex(unsigned int num){
 }
 
 // функция форматированного вывода
-void printf(const char* fmt, ...){
+void printf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
 
@@ -205,7 +205,7 @@ void update_cursor(void) {
     outb(0x3D5, (uint8_t)((pos >> 8) & 0xFF));
 }
 
-void redraw_input(){
+void redraw_input() {
     clear_row(g_cursor_row);
     g_cursor_col = 0;
     set_color(FG_CYAN, BLACK_ATTR);
@@ -213,10 +213,11 @@ void redraw_input(){
     reset_color();
     print_string(inputbuf);
     g_cursor_col = 1 + input_len;
+    input_pos = input_len;
     update_cursor();
 }
 
-void clear_input_line(){
+void clear_input_line() {
     clear_row(g_cursor_row);
     g_cursor_col = 0;
     uint8_t saved_attr = crnt_attr;
@@ -225,20 +226,22 @@ void clear_input_line(){
     crnt_attr = saved_attr;
     inputbuf[0] = '\0';
     input_len = 0;
+    input_pos = 0;
     update_cursor();
 }
 
-void load_history_line(int pos){
+void load_history_line(int pos) {
     clear_input_line();
     string_copy(inputbuf, history[pos], 256);
     input_len = 0;
     while (inputbuf[input_len] != '\0') input_len++;
     print_string(inputbuf);
     g_cursor_col = 1 + input_len;
+    input_pos = input_len;
     update_cursor();
 }
 
-void string_copy(char* dest, const char* src, int max_len){
+void string_copy(char* dest, const char* src, int max_len) {
     int i = 0;
     while (i < max_len - 1 && src[i] != '\0'){
         dest[i] = src[i];
@@ -248,8 +251,7 @@ void string_copy(char* dest, const char* src, int max_len){
 }
 
 /* UTF-8 -> CP866, читает один символ и двигует указатель */
-static unsigned char utf8_to_cp866(const char **p)
-{
+static unsigned char utf8_to_cp866(const char **p) {
     unsigned char c1 = (unsigned char)(*p)[0];
     unsigned char c2;
 
@@ -278,16 +280,14 @@ void utf8_to_cp866_str(const char *src, char *dst, int max_len ) {
     dst[i] = '\0';
 }
 
-void rus_print(const char *s)
-{
+void rus_print(const char *s) {
     while (*s) print_char(utf8_to_cp866(&s));
 }
 
 /* CP866 -> UTF-8, один символ в буфер out; возвращает число байт (1..3).
    Обратная к utf8_to_cp866: А-Я 0x80-0x9F, а-п 0xA0-0xAF -> D0 xx,
    р-я 0xE0-0xEF -> D1 xx, Ё 0xF0 -> D0 81, ё 0xF1 -> D1 91, № 0xFC. */
-static int cp866_to_utf8(unsigned char c, char *out)
-{
+static int cp866_to_utf8(unsigned char c, char *out) {
     if (c < 0x80) { out[0] = (char)c; return 1; }                        /* ASCII */
     if (c <= 0x9F) { out[0] = (char)0xD0; out[1] = (char)(0x90 + c - 0x80); return 2; } /* А..Я */
     if (c <= 0xAF) { out[0] = (char)0xD0; out[1] = (char)(0xB0 + c - 0xA0); return 2; } /* а..п */
@@ -301,8 +301,7 @@ static int cp866_to_utf8(unsigned char c, char *out)
 
 /* CP866 -> UTF-8 строка. Возвращает число исходных символов CP866,
    которые уместились: если меньше strlen(src) - строка обрезана. */
-int cp866_to_utf8_str(const char *src, char *dst, int max_len)
-{
+int cp866_to_utf8_str(const char *src, char *dst, int max_len) {
     int written = 0, chars = 0;
     char tmp[4];
     while (*src){
@@ -314,4 +313,77 @@ int cp866_to_utf8_str(const char *src, char *dst, int max_len)
     }
     dst[written] = '\0';
     return chars;
+}
+
+void input_left(void) {
+    if (input_pos > 0) {
+        input_pos--;
+        g_cursor_col--;
+        update_cursor();
+    }
+}
+
+void input_right(void) {
+    if (input_pos < input_len) {
+        input_pos++;
+        g_cursor_col++;
+        update_cursor();
+    }
+}
+
+void input_home() {
+    input_pos = 0;
+    g_cursor_col = 1;
+    update_cursor();
+}
+
+void input_end() {
+    input_pos = input_len;
+    g_cursor_col = 1 + input_len;
+    update_cursor();
+}
+
+void input_insert(char c) {
+    if (input_len >= (int)sizeof(inputbuf) - 1) return;
+    for (int i = input_len; i > input_pos; i--)
+        inputbuf[i] = inputbuf[i - 1];
+    inputbuf[input_pos++] = c;
+    input_len++;
+    inputbuf[input_len] = '\0';
+
+    int save = g_cursor_col + 1; 
+    for (int i = input_pos - 1; i < input_len; i++)
+        print_char(inputbuf[i]);
+    print_char(' ');
+    g_cursor_col = save;
+    update_cursor();
+}
+
+void input_delete(void) {
+    if (input_pos >= input_len) return;
+    for (int i = input_pos; i < input_len; i++)
+        inputbuf[i] = inputbuf[i + 1];
+    input_len--;
+    int save = g_cursor_col;
+    for (int i = input_pos; i < input_len; i++)
+        print_char(inputbuf[i]);
+    print_char(' ');
+    g_cursor_col = save;
+    update_cursor();    
+
+}
+
+void input_backspace(void) {          // удалить символ слева от курсора
+    if (input_pos == 0) return;       // не даём затереть '>'
+    input_pos--;
+    g_cursor_col--;
+    for (int i = input_pos; i < input_len; i++)
+        inputbuf[i] = inputbuf[i + 1];
+    input_len--;
+    int save = g_cursor_col;
+    for (int i = input_pos; i < input_len; i++)
+        print_char(inputbuf[i]);
+    print_char(' ');
+    g_cursor_col = save;
+    update_cursor();
 }
