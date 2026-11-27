@@ -15,3 +15,4 @@ bootloader/src/arch/x86_64/*.o
 bootloader/src/arch/x86_64/*.elf
 
 osirisOS\bootloader\src\arch\x86_64\nasm.exe
+bootloader/build/x86_64/make_bad_ofs.py

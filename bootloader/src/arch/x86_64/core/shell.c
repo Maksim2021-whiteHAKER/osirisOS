@@ -11,9 +11,10 @@
    Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
-    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info", "copy", "rename",
+    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info", "copy", "rename", "check",
+    "fix",
     "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить", "дополнить", "инфо",
-    "копировать", "переименовать",
+    "копировать", "переименовать", "проверить", "исправить",
     0
 };
 
@@ -30,8 +31,10 @@ static const char* commands[] = {
 #define CMD_INFO   10
 #define CMD_COPY   11
 #define CMD_RENAME 12
-#define CMD_COUNT_EN 13     /* сколько команд в верхнем ряду */
-#define CMD_MAX      26     /* всего команд (лат + рус) */
+#define CMD_CHECK  13
+#define CMD_FIX    14
+#define CMD_COUNT_EN 15     /* сколько команд в верхнем ряду */
+#define CMD_MAX      30     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
@@ -173,7 +176,7 @@ void shell_main() {
 
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    rus_print("Ядро Осирис v1.0.9 (C+asm)\n");
+    rus_print("Ядро Осирис v1.1.0 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
@@ -460,13 +463,49 @@ void shell_main() {
                             print_string("\n");
                         }
                     }
+                } else if (cmd == CMD_CHECK){        /* check / проверить */
+                    int problems = ofs_check();
+                    if (problems < 0){
+                        rus_print("ОФС не подключена\n");
+                    } else if (problems == 0){
+                        set_color(FG_CYAN, BLACK_ATTR);
+                        rus_print("проверено: всё чисто\n");
+                        reset_color();
+                    } else {
+                        set_color(FG_RED, BLACK_ATTR);
+                        rus_print("итого проблем: ");
+                        print_uint((unsigned int)problems);
+                        print_string("\n");
+                        reset_color();
+                    }
+                } else if (cmd == CMD_FIX){          /* fix / исправить */
+                    uint32_t fixed_cnt = 0;
+                    int remaining = ofs_repair(&fixed_cnt);
+                    if (remaining < 0){
+                        rus_print("ОФС не подключена\n");
+                    } else if (remaining == 0){
+                        set_color(FG_CYAN, BLACK_ATTR);
+                        rus_print("исправлено: ");
+                        print_uint(fixed_cnt);
+                        rus_print(", осталось проблем: 0\n");
+                        reset_color();
+                    } else {
+                        set_color(FG_RED, BLACK_ATTR);
+                        rus_print("исправлено: ");
+                        print_uint(fixed_cnt);
+                        rus_print(", не исправляется автоматически: ");
+                        print_uint((unsigned int)remaining);
+                        print_string("\n");
+                        rus_print("(запусти проверить; двойные блоки - удали лишний файл)\n");
+                        reset_color();
+                    }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    rus_print("Ядро Осирис v1.0.9 (C+asm)\n");
+                    rus_print("Ядро Осирис v1.1.0 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info, copy, rename\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо, копировать, переименовать\n");
+                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info, copy, rename, check, fix\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо, копировать, переименовать, проверить, исправить\n");
                     rus_print("(Рус/Англ: Caps Lock)\n");
                 } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;

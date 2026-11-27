@@ -590,3 +590,175 @@ int ofs_copy(const char *oldname, const char *newname){
     }
     return (int)size;
 }
+
+/* ===== проверка и исправление (этапы 7-8, fsck) ===== */
+// общая сверка битмапа с таблицей. fix = 0 - только отчёт (команда проверить),
+// fix = 1 - сразу чинить безопасное: потерянные блоки освобождаются,
+// мусорные записи освобождаются, заявленные файлом свободные блоки
+// принимаются в битмап. Двойные блоки и записи за границей данных
+// автоматически не правятся: за файлами могут стоять настоящие данные,
+// выбирать «чью» копию оставить должен человек.
+// Возвращает: fix=0 - число найденных проблем; fix=1 - число оставшихся.
+// fixed_out (может быть NULL) получает число исправленных проблем.
+static int ofs_audit(int fix, uint32_t *fixed_out){
+    if (!ofs_ready) return -1;
+
+    static uint8_t claimed[8 * OFS_BLOCK_SIZE];  // блоки, заявленные файлами
+    for (uint32_t i = 0; i < 8 * OFS_BLOCK_SIZE; i++) claimed[i] = 0;
+
+    int files = 0, broken = 0, doubled = 0, garbage = 0;
+    uint32_t lost_blocks = 0;
+    uint32_t fixed_lost = 0, fixed_broken = 0, fixed_garbage = 0;
+
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+        files++;
+        if (e[0] == 0){   // флаг занят, а имени нет
+            rus_print("  мусорная запись: флаг занят, имени нет (запись ");
+            print_uint((unsigned int)i);
+            print_string(")\n");
+            garbage++;
+            if (fix){
+                uint8_t *ew = ofs_table + i * OFS_ENTRY_SIZE;
+                ew[56] = 0;   // освобождаем запись
+                int tsec = (i * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+                ata_write_sector(OFS_TABLE_LBA + tsec,
+                                 ofs_table + tsec * OFS_BLOCK_SIZE);
+                rus_print("    исправлено: запись освобождена\n");
+                fixed_garbage++;
+            }
+            continue;
+        }
+        char name_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, name_cp, OFS_NAME_SIZE);
+        uint32_t size   = rd32(e + 48);
+        uint32_t start  = rd32(e + 52);
+        uint32_t blocks = (size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+        int entry_bad = 0, oob = 0, adopted = 0, refused = 0;
+        for (uint32_t b = start; b < start + blocks; b++){
+            if (b >= ofs_total_blocks){
+                rus_print("  за границей данных: ");
+                print_string(name_cp);
+                rus_print(" блок ");
+                print_uint((unsigned int)b);
+                print_string("\n");
+                entry_bad = 1;
+                oob = 1;
+                break;
+            }
+            if (!(ofs_bitmap[b >> 3] & (0x80 >> (b & 7)))){
+                rus_print("  битмап свободен, а файл занял: ");
+                print_string(name_cp);
+                rus_print(" блок ");
+                print_uint((unsigned int)b);
+                print_string("\n");
+                entry_bad = 1;
+                if (fix){
+                    if (claimed[b >> 3] & (0x80 >> (b & 7))){
+                        // блок уже заявлен другим файлом - это тоже двойное
+                        // использование, автоматически не разруливается
+                        rus_print("    не исправляется: блок заявлен и другим файлом\n");
+                        refused = 1;
+                    } else {
+                        ofs_bitmap[b >> 3] |= (0x80 >> (b & 7));
+                        // заявку отмечаем и в claimed, иначе проход 2 (потерянные)
+                        // не увидит владельца и освободит то, что мы вернули
+                        claimed[b >> 3] |= (0x80 >> (b & 7));
+                        adopted++;
+                        rus_print("    исправлено: блок принят в битмап\n");
+                    }
+                }
+                continue;
+            }
+            if (claimed[b >> 3] & (0x80 >> (b & 7))){
+                rus_print("  блок у двух файлов: ");
+                print_string(name_cp);
+                rus_print(" блок ");
+                print_uint((unsigned int)b);
+                print_string("\n");
+                doubled++;
+                continue;
+            }
+            claimed[b >> 3] |= (0x80 >> (b & 7));
+        }
+        if (fix && adopted > 0)
+            ofs_bitmap_flush(start, blocks);
+        if (entry_bad){
+            broken++;
+            if (fix && !oob && !refused) fixed_broken++;
+        }
+    }
+
+    // проход 2: битмап занят, но файлы это место не заявили -> потеряно
+    int in_run = 0;
+    uint32_t run_start = 0;
+    for (uint32_t b = 0; b < ofs_total_blocks; b++){
+        int busy = (ofs_bitmap[b >> 3] & (0x80 >> (b & 7))) != 0;
+        int cl   = (claimed[b >> 3] & (0x80 >> (b & 7))) != 0;
+        if (busy && !cl){
+            if (!in_run){ in_run = 1; run_start = b; }
+            lost_blocks++;
+        } else if (in_run){
+            rus_print("  потеряно: блоки ");
+            print_uint((unsigned int)run_start);
+            if (b > run_start + 1){
+                rus_print("-");
+                print_uint((unsigned int)(b - 1));
+            }
+            print_string("\n");
+            if (fix){
+                for (uint32_t c = run_start; c < b; c++)
+                    ofs_bitmap[c >> 3] &= ~(0x80 >> (c & 7));
+                ofs_bitmap_flush(run_start, b - run_start);
+                rus_print("    исправлено: блоки освобождены\n");
+                fixed_lost += b - run_start;
+            }
+            in_run = 0;
+        }
+    }
+    if (in_run){   // серия дошла до конца области данных
+        rus_print("  потеряно: блоки ");
+        print_uint((unsigned int)run_start);
+        if (ofs_total_blocks > run_start + 1){
+            rus_print("-");
+            print_uint((unsigned int)(ofs_total_blocks - 1));
+        }
+        print_string("\n");
+        if (fix){
+            for (uint32_t c = run_start; c < ofs_total_blocks; c++)
+                ofs_bitmap[c >> 3] &= ~(0x80 >> (c & 7));
+            ofs_bitmap_flush(run_start, ofs_total_blocks - run_start);
+            rus_print("    исправлено: блоки освобождены\n");
+            fixed_lost += ofs_total_blocks - run_start;
+        }
+    }
+
+    if (fixed_out) *fixed_out = fixed_lost + (uint32_t)fixed_broken + fixed_garbage;
+    if (!fix){
+        rus_print("итог: файлов ");
+        print_uint((unsigned int)files);
+        rus_print(", потеряно блоков ");
+        print_uint((unsigned int)lost_blocks);
+        rus_print(", битых записей ");
+        print_uint((unsigned int)broken);
+        rus_print(", двойных блоков ");
+        print_uint((unsigned int)doubled);
+        rus_print(", мусорных записей ");
+        print_uint((unsigned int)garbage);
+        print_string("\n");
+        return (int)(lost_blocks + (uint32_t)broken + (uint32_t)doubled + (uint32_t)garbage);
+    }
+    return (int)((lost_blocks - fixed_lost) + (uint32_t)(broken - fixed_broken)
+                 + (uint32_t)doubled + (garbage - fixed_garbage));
+}
+
+// проверить: только отчёт (этап 7)
+int ofs_check(void){
+    return ofs_audit(0, 0);
+}
+
+// исправить: чинит безопасное, возвращает число оставшихся проблем (этап 8)
+int ofs_repair(uint32_t *fixed){
+    return ofs_audit(1, fixed);
+}
