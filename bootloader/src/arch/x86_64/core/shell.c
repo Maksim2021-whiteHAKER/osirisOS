@@ -18,7 +18,7 @@ static const char* commands[] = {
     0
 };
 
-#define KERNEL_VERSION "1.1.3"
+#define KERNEL_VERSION "1.1.4"
 
 #define CMD_VER    0
 #define CMD_CLR    1
