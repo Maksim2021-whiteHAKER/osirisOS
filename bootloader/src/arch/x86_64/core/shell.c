@@ -11,8 +11,8 @@
    Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
-    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append",
-    "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить", "дополнить",
+    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info",
+    "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить", "дополнить", "инфо",
     0
 };
 
@@ -26,8 +26,9 @@ static const char* commands[] = {
 #define CMD_WRITE  7
 #define CMD_DELETE 8
 #define CMD_APPEND 9
-#define CMD_COUNT_EN 10     /* сколько команд в верхнем ряду */
-#define CMD_MAX      20     /* всего команд (лат + рус) */
+#define CMD_INFO   10
+#define CMD_COUNT_EN 11     /* сколько команд в верхнем ряду */
+#define CMD_MAX      22     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
@@ -55,7 +56,7 @@ int start_with(const char* str, const char* prefix){
     return 1;
 }
 
-/* точное совпадение ввода с командой; возвращает канонический номер 0..9 или -1 */
+/* точное совпадение ввода с командой; возвращает канонический номер 0..10 или -1 */
 static int find_command(const char* input){
     for (int i = 0; i < cmd_total; i++){
         if (int_stringcmp(input, cmd_cp866[i]) == 0){
@@ -100,6 +101,13 @@ static int append_prefix_len(const char* input){
     return 0;
 }
 
+/* длина префикса info/инфо во вводе (0 = это не info) */
+static int info_prefix_len(const char* input){
+    if (start_with(input, "info")) return 4;
+    if (start_with(input, cmd_cp866[CMD_INFO + CMD_COUNT_EN])) return 4;
+    return 0;
+}
+
 int find_and_complete(){
     inputbuf[input_len] = '\0';
     int match_count = 0;
@@ -137,8 +145,7 @@ void shell_main() {
 
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    rus_print("Ядро Осирис v1.0.7 (C+asm)\n");
-    // rus_print("Здравствуй! русская консоль работает \n");
+    rus_print("Ядро Осирис v1.0.8 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
@@ -175,6 +182,8 @@ void shell_main() {
                 int wp  = write_prefix_len(inputbuf);
                 int dp  = delete_prefix_len(inputbuf);
                 int ap  = append_prefix_len(inputbuf);
+                int ip  = info_prefix_len(inputbuf);
+                uint32_t isize = 0, istart = 0, iblocks = 0;
 
                 if (ep > 0){                        /* echo / эхо */
                     int offset = ep;
@@ -299,13 +308,49 @@ void shell_main() {
                             reset_color();
                         }
                     }
+                } else if (ip > 0){                  /* info / инфо: без имени - сводка по ОФС */
+                    int offset = ip;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    if (offset >= input_len){
+                        uint32_t total, used, files;
+                        ofs_stats(&total, &used, &files);
+                        rus_print("ОФС: блоков данных ");
+                        print_uint(total);
+                        rus_print(", занято ");
+                        print_uint(used);
+                        rus_print(", свободно ");
+                        print_uint(total - used);
+                        rus_print(", файлов ");
+                        print_uint(files);
+                        print_string("\n");
+                        rus_print("(суперблок LBA 256, битмап 257-264, таблица 265-280, данные 281+)\n");
+                    } else if (ofs_info(inputbuf + offset, &isize, &istart, &iblocks) == 0){
+                        print_string(inputbuf + offset);
+                        rus_print(": ");
+                        print_uint(isize);
+                        rus_print(" байт, старт блок ");
+                        print_uint(istart);
+                        rus_print(", блоков ");
+                        print_uint(iblocks);
+                        rus_print(" (сектора ");
+                        print_uint(OFS_DATA_LBA + istart);
+                        print_string("-");
+                        print_uint(OFS_DATA_LBA + istart + (iblocks ? iblocks - 1 : 0));
+                        rus_print(")\n");
+                    } else {
+                        set_color(FG_RED, BLACK_ATTR);
+                        rus_print("файл не найден: ");
+                        reset_color();
+                        print_string(inputbuf + offset);
+                        print_string("\n");
+                    }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    rus_print("Ядро Осирис v1.0.7 (C+asm)\n");
+                    rus_print("Ядро Осирис v1.0.8 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить\n");
+                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо\n");
                     rus_print("(Рус/Англ: Caps Lock)\n");
                 } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;

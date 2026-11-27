@@ -50,5 +50,12 @@ int ofs_append(const char *name, const char *text, int *appended);
                                   // -1 нет места/не готова/ошибка диска,
                                   // -2/-3 - только при создании (коды ofs_write)
 uint32_t ofs_free_blocks(void);   // свободные блоки данных
+int ofs_info(const char *name, uint32_t *size, uint32_t *start, uint32_t *nblocks);
+                                  // о файле: размер, стартовый блок, число блоков
+                                  // (любой из выходных параметров может быть NULL)
+                                  // 0 = ок, -1 = не готова / файла нет
+void ofs_stats(uint32_t *total, uint32_t *used, uint32_t *files);
+                                  // сводка по ОФС: всего блоков данных, занято, файлов
+                                  // (если ОФС не готова - все нули)
 
 #endif

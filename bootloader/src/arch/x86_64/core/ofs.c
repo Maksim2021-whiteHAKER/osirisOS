@@ -1,5 +1,5 @@
 // x86_64/core/ofs.c
-// ОФС - Осирис Файловая Система. Этап 4: чтение, запись, удаление, допись.
+// ОФС - Осирис Файловая Система. Этап 5: чтение, запись, удаление, допись, инфо.
 // Файлы лежат в области данных ПОДРЯД от своего стартового блока
 // (без цепочек - как FAT, только проще). Имена хранятся на диске в UTF-8,
 // на экране и во вводе - CP866, конвертация через console.c.
@@ -453,4 +453,45 @@ int ofs_append(const char *name, const char *text, int *appended){
     }
     if (appended) *appended = (int)add_len;
     return (int)new_size;
+}
+
+// информация о файле (этап 5): размер, стартовый блок, сколько блоков занято.
+// name - в CP866 (как с клавиатуры). Выходные параметры могут быть NULL.
+// возвращает 0 и заполняет выходные параметры, -1 если ОФС не готова
+// или файла с таким именем нет
+int ofs_info(const char *name, uint32_t *size, uint32_t *start, uint32_t *nblocks){
+    if (!ofs_ready) return -1;
+
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+
+        char disk_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, disk_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(disk_cp, name) != 0) continue;
+
+        uint32_t sz = rd32(e + 48);
+        if (size)    *size    = sz;
+        if (start)   *start   = rd32(e + 52);
+        if (nblocks) *nblocks = (sz + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+        return 0;
+    }
+    return -1;
+}
+
+// сводка по ОФС (этап 5): всего блоков данных, занято, файлов.
+// Не готова - вернёт нули (кроме total: он известен только при готовности,
+// поэтому при !ready всё 0).
+void ofs_stats(uint32_t *total, uint32_t *used, uint32_t *files){
+    uint32_t t = 0, u = 0, f = 0;
+    if (ofs_ready){
+        t = ofs_total_blocks;
+        for (uint32_t b = 0; b < t; b++)
+            if (ofs_bitmap[b >> 3] & (0x80 >> (b & 7))) u++;
+        for (int i = 0; i < OFS_TABLE_ENTRIES; i++)
+            if (ofs_table[i * OFS_ENTRY_SIZE + 56] == OFS_FLAG_FILE) f++;
+    }
+    if (total) *total = t;
+    if (used)  *used  = u;
+    if (files) *files = f;
 }
