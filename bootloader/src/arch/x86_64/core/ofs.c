@@ -1,5 +1,5 @@
 // x86_64/core/ofs.c
-// ОФС - Осирис Файловая Система. Этап 3: чтение, запись, удаление.
+// ОФС - Осирис Файловая Система. Этап 4: чтение, запись, удаление, допись.
 // Файлы лежат в области данных ПОДРЯД от своего стартового блока
 // (без цепочек - как FAT, только проще). Имена хранятся на диске в UTF-8,
 // на экране и во вводе - CP866, конвертация через console.c.
@@ -129,7 +129,7 @@ uint32_t ofs_free_blocks(void){
     return free_n;
 }
 
-/* ===== запись и удаление (этапы 2-3) ===== */
+/* ===== запись, удаление, допись (этапы 2-4) ===== */
 
 // аллокатор: найти подряд need свободных блоков (first-fit);
 // возвращает номер первого блока или (uint32_t)-1, если места нет
@@ -291,4 +291,166 @@ int ofs_delete(const char *name){
         return (int)size;
     }
     return -1;
+}
+
+// дописать текст в конец файла; если файла нет - создать (удобно для логов).
+// appended (если не NULL) - сколько байт дописано именно сейчас.
+// возвращает новый размер файла или минус:
+//   -1 ОФС не готова / нет места / ошибка диска
+//   -2/-3 - только при создании файла (коды ofs_write)
+// Три пути:
+//   1) всё влезает в последний частичный блок - read-modify-write одного сектора
+//   2) блоки сразу за хвостом свободны - расширяем на месте
+//   3) иначе переносим файл целиком на новое место (аллокатор ищет цельный ряд)
+// Пустой файл (0 блоков) идёт только путём 3: его start ненадёжен, блок мог
+// уже уйти другому файлу (нулевые файлы биты в битмапе не занимают).
+int ofs_append(const char *name, const char *text, int *appended){
+    if (!ofs_ready) return -1;
+    if (appended) *appended = 0;
+
+    uint32_t add_len = 0;
+    while (text[add_len] != '\0') add_len++;
+
+    int idx = -1;
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+        char disk_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, disk_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(disk_cp, name) == 0){ idx = i; break; }
+    }
+
+    // файла нет - обычная запись (там проверятся имя и место)
+    if (idx < 0){
+        int res = ofs_write(name, text);
+        if (res >= 0 && appended) *appended = res;
+        return res;
+    }
+
+    uint8_t *e = ofs_table + idx * OFS_ENTRY_SIZE;
+    uint32_t old_size   = rd32(e + 48);
+    uint32_t old_start  = rd32(e + 52);
+    uint32_t old_blocks = (old_size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+    uint32_t new_size   = old_size + add_len;
+    uint32_t new_blocks = (new_size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+
+    if (add_len == 0) return (int)old_size;   // нечего дописывать
+
+    static uint8_t sec[OFS_BLOCK_SIZE];
+
+    /* путь 1: допись в пределах последнего блока (частичный хвост есть всегда,
+       иначе new_blocks был бы больше) */
+    if (new_blocks == old_blocks){
+        uint32_t off = old_size - (old_blocks - 1) * OFS_BLOCK_SIZE;
+        if (ata_read_sector(OFS_DATA_LBA + old_start + old_blocks - 1, sec) != 0) return -1;
+        for (uint32_t j = 0; j < add_len; j++) sec[off + j] = (uint8_t)text[j];
+        if (ata_write_sector(OFS_DATA_LBA + old_start + old_blocks - 1, sec) != 0) return -1;
+        wr32(e + 48, new_size);
+        int tsec = (idx * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+        if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0) return -1;
+        if (appended) *appended = (int)add_len;
+        return (int)new_size;
+    }
+
+    /* путь 2: расширяем на месте, если нужные блоки сразу за хвостом свободны
+       и не выходят за пределы области данных */
+    if (old_blocks > 0 && old_start + new_blocks <= ofs_total_blocks){
+        int fits = 1;
+        for (uint32_t b = old_start + old_blocks; b < old_start + new_blocks; b++)
+            if (ofs_bitmap[b >> 3] & (0x80 >> (b & 7))){ fits = 0; break; }
+        if (fits){
+            // дозапись в частичный хвост (если хвост ровный - его нет)
+            uint32_t off = old_size - (old_blocks - 1) * OFS_BLOCK_SIZE;
+            if (off < OFS_BLOCK_SIZE){
+                if (ata_read_sector(OFS_DATA_LBA + old_start + old_blocks - 1, sec) != 0) return -1;
+                for (uint32_t j = 0; off + j < OFS_BLOCK_SIZE && j < add_len; j++)
+                    sec[off + j] = (uint8_t)text[j];
+                if (ata_write_sector(OFS_DATA_LBA + old_start + old_blocks - 1, sec) != 0) return -1;
+            }
+            // новые полные блоки с байта t0 (граница блока)
+            uint32_t t0 = old_blocks * OFS_BLOCK_SIZE - old_size;
+            for (uint32_t i = old_blocks; i < new_blocks; i++){
+                uint32_t base = t0 + (i - old_blocks) * OFS_BLOCK_SIZE;
+                for (uint32_t j = 0; j < OFS_BLOCK_SIZE; j++){
+                    uint32_t ti = base + j;
+                    sec[j] = (ti < add_len) ? (uint8_t)text[ti] : 0;
+                }
+                if (ata_write_sector(OFS_DATA_LBA + old_start + i, sec) != 0) return -1;
+            }
+            wr32(e + 48, new_size);
+            int tsec = (idx * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+            if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0) return -1;
+            ofs_mark(old_start + old_blocks, new_blocks - old_blocks, 1);
+            if (ofs_bitmap_flush(old_start + old_blocks, new_blocks - old_blocks) != 0) return -1;
+            if (appended) *appended = (int)add_len;
+            return (int)new_size;
+        }
+    }
+
+    /* путь 3: перенос на новое место. Старые блоки всё ещё заняты в битмапе,
+       поэтому аллокатор не вернёт их пересечение со старым местом. */
+    uint32_t start = 0;
+    if (new_blocks > 0){
+        start = ofs_alloc(new_blocks);
+        if (start == (uint32_t)-1) return -1;
+        ofs_mark(start, new_blocks, 1);
+    }
+
+    // перенос старых данных посекторно
+    for (uint32_t i = 0; i < old_blocks; i++){
+        if (ata_read_sector(OFS_DATA_LBA + old_start + i, sec) != 0){
+            ofs_mark(start, new_blocks, 0); return -1;
+        }
+        if (ata_write_sector(OFS_DATA_LBA + start + i, sec) != 0){
+            ofs_mark(start, new_blocks, 0); return -1;
+        }
+    }
+
+    // допись нового текста с позиции old_size (частичный хвост + новые блоки)
+    {
+        uint32_t pos = old_size;
+        while (pos < new_size){
+            uint32_t bi  = pos / OFS_BLOCK_SIZE;
+            uint32_t off = pos % OFS_BLOCK_SIZE;
+            if (bi < old_blocks){
+                if (ata_read_sector(OFS_DATA_LBA + start + bi, sec) != 0){
+                    ofs_mark(start, new_blocks, 0); return -1;
+                }
+            } else {
+                for (uint32_t j = 0; j < OFS_BLOCK_SIZE; j++) sec[j] = 0;
+            }
+            uint32_t chunk = OFS_BLOCK_SIZE - off;
+            if (chunk > new_size - pos) chunk = new_size - pos;
+            for (uint32_t j = 0; j < chunk; j++)
+                sec[off + j] = (uint8_t)text[pos - old_size + j];
+            for (uint32_t j = off + chunk; j < OFS_BLOCK_SIZE; j++) sec[j] = 0;
+            if (ata_write_sector(OFS_DATA_LBA + start + bi, sec) != 0){
+                ofs_mark(start, new_blocks, 0); return -1;
+            }
+            pos += chunk;
+        }
+    }
+
+    // таблица: новый старт и размер (при сбое - откат новых блоков в ОЗУ,
+    // на диске таблица не менялась, старое место осталось помеченным)
+    wr32(e + 48, new_size);
+    wr32(e + 52, start);
+    int tsec = (idx * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+    if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0){
+        ofs_mark(start, new_blocks, 0);
+        return -1;
+    }
+
+    // битмап: новые заняты, старые свободны, сброс охвата разом
+    if (old_blocks > 0) ofs_mark(old_start, old_blocks, 0);
+    {
+        uint32_t bmin = start, bmax = start + new_blocks;
+        if (old_blocks > 0){
+            if (old_start < bmin) bmin = old_start;
+            if (old_start + old_blocks > bmax) bmax = old_start + old_blocks;
+        }
+        if (bmax > bmin && ofs_bitmap_flush(bmin, bmax - bmin) != 0) return -1;
+    }
+    if (appended) *appended = (int)add_len;
+    return (int)new_size;
 }
