@@ -11,8 +11,9 @@
    Верхний ряд — латиница, нижний — русские синонимы (в исходнике UTF-8).
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
-    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info",
+    "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info", "copy", "rename",
     "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить", "дополнить", "инфо",
+    "копировать", "переименовать",
     0
 };
 
@@ -27,8 +28,10 @@ static const char* commands[] = {
 #define CMD_DELETE 8
 #define CMD_APPEND 9
 #define CMD_INFO   10
-#define CMD_COUNT_EN 11     /* сколько команд в верхнем ряду */
-#define CMD_MAX      22     /* всего команд (лат + рус) */
+#define CMD_COPY   11
+#define CMD_RENAME 12
+#define CMD_COUNT_EN 13     /* сколько команд в верхнем ряду */
+#define CMD_MAX      26     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
@@ -94,6 +97,19 @@ static int delete_prefix_len(const char* input){
     return 0;
 }
 
+/* длина префикса copy/копировать во вводе (0 = это не copy) */
+static int copy_prefix_len(const char* input){
+    if (start_with(input, "copy")) return 4;
+    if (start_with(input, cmd_cp866[CMD_COPY + CMD_COUNT_EN])) return 10;
+    return 0;
+}
+/* длина префикса rename/переименовать во вводе (0 = это не rename) */
+static int rename_prefix_len(const char* input){
+    if (start_with(input, "rename")) return 6;
+    if (start_with(input, cmd_cp866[CMD_RENAME + CMD_COUNT_EN])) return 13;
+    return 0;
+}
+
 /* длина префикса append/дополнить во вводе (0 = это не append) */
 static int append_prefix_len(const char* input){
     if (start_with(input, "append")) return 6;
@@ -139,13 +155,25 @@ int find_and_complete(){
     return 0;
 }
 
+/* разобрать "имя1 имя2" после префикса; 1 = оба имени прочитаны */
+static int parse_two_names(const char* in, int len, int offset, char* n1, char* n2){
+    int a = 0, b = 0;
+    while (offset < len && in[offset] == ' ') offset++;
+    while (offset < len && in[offset] != ' ' && a < 63) n1[a++] = in[offset++];
+    n1[a] = '\0';
+    while (offset < len && in[offset] == ' ') offset++;
+    while (offset < len && in[offset] != ' ' && b < 63) n2[b++] = in[offset++];
+    n2[b] = '\0';
+    return (a > 0 && b > 0) ? 1 : 0;
+}
+
 // точка входа shell_main
 void shell_main() {
     init_commands_cp866();        /* русские команды -> CP866-копии, до sti! */
 
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    rus_print("Ядро Осирис v1.0.8 (C+asm)\n");
+    rus_print("Ядро Осирис v1.0.9 (C+asm)\n");
     printf("Setting up IDT...\n");
     init_idt();
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
@@ -177,12 +205,14 @@ void shell_main() {
             print_string("\n");
             if (input_len > 0){
                 int cmd = find_command(inputbuf);
-                int ep  = echo_prefix_len(inputbuf);
-                int cp  = cat_prefix_len(inputbuf);
-                int wp  = write_prefix_len(inputbuf);
-                int dp  = delete_prefix_len(inputbuf);
-                int ap  = append_prefix_len(inputbuf);
-                int ip  = info_prefix_len(inputbuf);
+                int ep = echo_prefix_len(inputbuf);
+                int cp = cat_prefix_len(inputbuf);
+                int wp = write_prefix_len(inputbuf);
+                int dp = delete_prefix_len(inputbuf);
+                int ap = append_prefix_len(inputbuf);
+                int ip = info_prefix_len(inputbuf);
+                int kyp = copy_prefix_len(inputbuf);
+                int rp = rename_prefix_len(inputbuf);
                 uint32_t isize = 0, istart = 0, iblocks = 0;
 
                 if (ep > 0){                        /* echo / эхо */
@@ -344,13 +374,99 @@ void shell_main() {
                         print_string(inputbuf + offset);
                         print_string("\n");
                     }
+                } else if (cmd == CMD_COPY && kyp == 0){   /* copy / копировать без аргументов */
+                    rus_print("Использование: копировать старое_имя новое_имя\n");
+                } else if (kyp > 0){                        /* copy / копировать старое новое */
+                    int offset = kyp;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    char name1[64], name2[64];
+                    if (!parse_two_names(inputbuf, input_len, offset, name1, name2)){
+                        rus_print("Использование: копировать старое_имя новое_имя\n");
+                    } else {
+                        int cres = ofs_copy(name1, name2);
+                        if (cres >= 0){
+                            set_color(FG_CYAN, BLACK_ATTR);
+                            rus_print("скопировано ");
+                            reset_color();
+                            print_uint((unsigned int)cres);
+                            rus_print(" байт: ");
+                            print_string(name1);
+                            print_string(" -> ");
+                            print_string(name2);
+                            print_string("\n");
+                        } else if (cres == -2){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("новое имя не подходит (до 23 кириллических букв)\n");
+                            reset_color();
+                        } else if (cres == -3){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("пустое имя файла\n");
+                            reset_color();
+                        } else if (cres == -5){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("имя занято: ");
+                            reset_color();
+                            print_string(name2);
+                            print_string("\n");
+                        } else if (cres == -4){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("файл не найден: ");
+                            reset_color();
+                            print_string(name1);
+                            print_string("\n");
+                        } else {
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("не удалось скопировать: нет места или ОФС не готова\n");
+                            reset_color();
+                        }
+                    }
+                } else if (cmd == CMD_RENAME && rp == 0){  /* rename / переименовать без аргументов */
+                    rus_print("Использование: переименовать старое_имя новое_имя\n");
+                } else if (rp > 0){                        /* rename / переименовать старое новое */
+                    int offset = rp;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    char name1[64], name2[64];
+                    if (!parse_two_names(inputbuf, input_len, offset, name1, name2)){
+                        rus_print("Использование: переименовать старое_имя новое_имя\n");
+                    } else {
+                        int rres = ofs_rename(name1, name2);
+                        if (rres == 0){
+                            set_color(FG_CYAN, BLACK_ATTR);
+                            rus_print("переименовано: ");
+                            reset_color();
+                            print_string(name1);
+                            print_string(" -> ");
+                            print_string(name2);
+                            print_string("\n");
+                        } else if (rres == -2){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("новое имя не подходит (до 23 кириллических букв)\n");
+                            reset_color();
+                        } else if (rres == -3){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("пустое имя файла\n");
+                            reset_color();
+                        } else if (rres == -5){
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("имя занято: ");
+                            reset_color();
+                            print_string(name2);
+                            print_string("\n");
+                        } else {
+                            set_color(FG_RED, BLACK_ATTR);
+                            rus_print("файл не найден: ");
+                            reset_color();
+                            print_string(name1);
+                            print_string("\n");
+                        }
+                    }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    rus_print("Ядро Осирис v1.0.8 (C+asm)\n");
+                    rus_print("Ядро Осирис v1.0.9 (C+asm)\n");
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо\n");
+                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info, copy, rename\n");
+                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо, копировать, переименовать\n");
                     rus_print("(Рус/Англ: Caps Lock)\n");
                 } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;

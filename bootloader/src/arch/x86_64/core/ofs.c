@@ -495,3 +495,98 @@ void ofs_stats(uint32_t *total, uint32_t *used, uint32_t *files){
     if (used)  *used  = u;
     if (files) *files = f;
 }
+
+/* ===== копирование и переименование (этап 6) ===== */
+// найти запись файла по имени (CP866); индекс в таблице или -1
+static int ofs_find(const char *name){
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+        char disk_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, disk_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(disk_cp, name) == 0) return i;
+    }
+    return -1;
+}
+
+// переименовать: на диске меняется только имя в таблице.
+// порядок тот же принцип, что в удалении: одна запись = один сектор таблицы
+int ofs_rename(const char *oldname, const char *newname){
+    if (!ofs_ready) return -1;
+    // новое имя: CP866 -> UTF-8 и проверки (как в ofs_write)
+    char name_u8[224];
+    int src_len = 0;
+    while (newname[src_len] != '\0') src_len++;
+    if (src_len == 0) return -3;
+    if (cp866_to_utf8_str(newname, name_u8, (int)sizeof(name_u8)) != src_len) return -2;
+    int name_len = 0;
+    while (name_u8[name_len] != '\0') name_len++;
+    if (name_len > OFS_NAME_SIZE - 1) return -2;
+    int idx = ofs_find(oldname);
+    if (idx < 0) return -4;                    // старого файла нет
+    int busy = ofs_find(newname);
+    if (busy >= 0 && busy != idx) return -5;   // имя занято чужим файлом
+    if (busy == idx) return 0;                 // то же имя - делать нечего
+    uint8_t *e = ofs_table + idx * OFS_ENTRY_SIZE;
+    // переписываем только имя (первые 48 байт), размер/старт/флаг остаются
+    for (int j = 0; j < OFS_NAME_SIZE; j++)
+        e[j] = (j < name_len) ? (uint8_t)name_u8[j] : 0;
+    int tsec = (idx * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+    if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0)
+        return -1;
+    return 0;
+}
+// скопировать файл: место под копию ищет аллокатор, данные переписываем
+// сектор за сектором. Порядок на диске как в ofs_write:
+// данные -> таблица (копия появляется) -> битмап; сбой между шагами
+// не портит чужие файлы
+int ofs_copy(const char *oldname, const char *newname){
+    if (!ofs_ready) return -1;
+    // имя копии - те же проверки, что в ofs_rename
+    char name_u8[224];
+    int src_len = 0;
+    while (newname[src_len] != '\0') src_len++;
+    if (src_len == 0) return -3;
+    if (cp866_to_utf8_str(newname, name_u8, (int)sizeof(name_u8)) != src_len) return -2;
+    int name_len = 0;
+    while (name_u8[name_len] != '\0') name_len++;
+    if (name_len > OFS_NAME_SIZE - 1) return -2;
+    int src = ofs_find(oldname);
+    if (src < 0) return -4;
+    if (ofs_find(newname) >= 0) return -5;
+    const uint8_t *se = ofs_table + src * OFS_ENTRY_SIZE;
+    uint32_t size   = rd32(se + 48);
+    uint32_t start  = rd32(se + 52);
+    uint32_t blocks = (size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+    int free_idx = -1;
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        if (ofs_table[i * OFS_ENTRY_SIZE + 56] != OFS_FLAG_FILE){ free_idx = i; break; }
+    }
+    if (free_idx < 0) return -1;               // таблица полна
+    uint32_t dst = 0;
+    if (blocks > 0){
+        dst = ofs_alloc(blocks);
+        if (dst == (uint32_t)-1) return -1;    // нет места
+        ofs_mark(dst, blocks, 1);
+    }
+    // само копирование: сектор у источника -> сектор приёмника
+    static uint8_t sec[OFS_BLOCK_SIZE];
+    for (uint32_t i = 0; i < blocks; i++){
+        if (ata_read_sector(OFS_DATA_LBA + start + i, sec) != 0) return -1;
+        if (ata_write_sector(OFS_DATA_LBA + dst + i, sec) != 0) return -1;
+    }
+    // запись таблицы для копии
+    uint8_t *de = ofs_table + free_idx * OFS_ENTRY_SIZE;
+    for (int j = 0; j < OFS_NAME_SIZE; j++)
+        de[j] = (j < name_len) ? (uint8_t)name_u8[j] : 0;
+    wr32(de + 48, size);
+    wr32(de + 52, dst);
+    de[56] = OFS_FLAG_FILE;
+    int tsec = (free_idx * OFS_ENTRY_SIZE) / OFS_BLOCK_SIZE;
+    if (ata_write_sector(OFS_TABLE_LBA + tsec, ofs_table + tsec * OFS_BLOCK_SIZE) != 0)
+        return -1;
+    if (blocks > 0){
+        if (ofs_bitmap_flush(dst, blocks) != 0) return -1;
+    }
+    return (int)size;
+}
