@@ -18,6 +18,8 @@ static const char* commands[] = {
     0
 };
 
+#define KERNEL_VERSION "1.1.3"
+
 #define CMD_VER    0
 #define CMD_CLR    1
 #define CMD_HELP   2
@@ -170,12 +172,36 @@ static int parse_two_names(const char* in, int len, int offset, char* n1, char* 
     return (a > 0 && b > 0) ? 1 : 0;
 }
 
+// Печатает список команд для указанного языка
+// lang = 0: Английский, lang = 1: Русский
+static void print_help_list(int lang) {
+    int start = (lang == 0) ? 0 : CMD_COUNT_EN;
+    int end   = (lang == 0) ? CMD_COUNT_EN : cmd_total;
+    
+    if (lang == 0) print_string("Commands: ");
+    else           rus_print("Команды: ");
+
+    for (int i = start; i < end; i++) {
+        if (lang == 0) {
+            print_string(commands[i]); // Для английского просто print_string
+        } else {
+            rus_print(commands[i]);    // Для русского конвертируем UTF-8 -> CP866
+        }
+        
+        // Ставим запятую, если это не последний элемент
+        if (i < end - 1) {
+            print_string(", ");
+        }
+    }
+    print_string("\n");
+}
+
 // точка входа shell_main
 void shell_main() {
     init_commands_cp866();        /* русские команды -> CP866-копии, до sti! */
     clear_screen();
     set_color(FG_WHITE, BLACK_ATTR);
-    rus_print("Ядро Осирис v1.1.3 (C+asm)\n");
+    printf("%r%s (C+asm)\n", "Ядро Осирис v", KERNEL_VERSION);
     printf("Setting up IDT...\n");
     init_idt();
     set_idt_gate(0x20, (uint32_t)irq0, 0x08, 0x8E);
@@ -499,12 +525,12 @@ void shell_main() {
                         reset_color();
                     }
                 } else if (cmd == CMD_VER){         /* ver / версия */
-                    rus_print("Ядро Осирис v1.1.3 (C+asm)\n");
+                    printf("%r%s (C+asm)\n", "Ядро Осирис v", KERNEL_VERSION);
                 } else if (cmd == CMD_CLR){         /* clr / очистить */
                     clear_screen();
                 } else if (cmd == CMD_HELP){        /* help / помощь */
-                    print_string("Commands: clr, help, ver, echo, uptime, ls, cat, write, delete, append, info, copy, rename, check, fix\n");
-                    rus_print("Команды: версия, очистить, помощь, эхо, время_работы, дир, читать, записать, удалить, дополнить, инфо, копировать, переименовать, проверить, исправить\n");
+                    print_help_list(0);
+                    print_help_list(1);
                     rus_print("(Рус/Англ: Caps Lock)\n");
                 } else if (cmd == CMD_UPTIME){      /* uptime / время_работы */
                     unsigned long seconds = get_ticks() / 100;

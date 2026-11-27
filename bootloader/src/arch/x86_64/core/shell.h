@@ -5,5 +5,6 @@
 void shell_main(void);
 int start_with(const char* str, const char* prefix);
 int find_and_complete(void);
+static void print_help_list(int lang);
 
 #endif

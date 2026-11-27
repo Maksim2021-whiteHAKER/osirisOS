@@ -182,6 +182,9 @@ void printf(const char* fmt, ...) {
             } else if (*fmt == 'c'){
                 print_char(va_arg(args, int));
 
+            } else if (*fmt == 'r'){
+                char* s = (va_arg(args, char*));
+                if (s) rus_print(s); else print_string("(null)");
             } else if (*fmt == '%'){
                 print_char('%');
 
