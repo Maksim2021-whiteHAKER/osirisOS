@@ -158,6 +158,46 @@ int ofs_load(const char *name, uint32_t load_addr, uint32_t *out_size){
     return -1;   // файла с таким именем нет
 }
 
+/* Этап 12: чтение файла В БУФЕР (для программ через ABI и будущих нужд).
+   Содержимое НЕ печатается. Копирует size байт, но не больше max -
+   полные сектора читаются во временный буфер, лишнее не вылезает.
+   Возвращает размер файла в байтах или минус:
+   -1 не готова / файла нет / ошибка диска / buf NULL,
+   -2 запись битая (старт+блоки за границей данных),
+   -3 файл больше буфера (size > max) */
+int ofs_read_buf(const char *name, char *buf, uint32_t max){
+    if (!ofs_ready || buf == 0 || max == 0) return -1;
+
+    static uint8_t sec[512];   // сектор данных
+
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+
+        char name_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, name_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(name_cp, name) != 0) continue;
+
+        // файл найден: читаем блоками, копируем в буфер вызывающего
+        uint32_t size  = rd32(e + 48);
+        uint32_t start = rd32(e + 52);
+        uint32_t done  = 0;
+        if (size > max) return -3;
+        if (start >= ofs_total_blocks ||
+            start + (size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE > ofs_total_blocks) return -2;
+
+        while (done < size){
+            if (ata_read_sector(OFS_DATA_LBA + start + done / OFS_BLOCK_SIZE, sec) != 0) return -1;
+            uint32_t n = size - done;
+            if (n > OFS_BLOCK_SIZE) n = OFS_BLOCK_SIZE;
+            for (uint32_t j = 0; j < n; j++) buf[done + j] = (char)sec[j];
+            done += n;
+        }
+        return (int)size;
+    }
+    return -1;   // файла с таким именем нет
+}
+
 uint32_t ofs_free_blocks(void){
     if (!ofs_ready) return 0;
     uint32_t free_n = 0;

@@ -18,7 +18,7 @@ static const char* commands[] = {
     0
 };
 
-#define KERNEL_VERSION "1.1.5"
+#define KERNEL_VERSION "1.1.6"
 
 #define CMD_VER    0
 #define CMD_CLR    1
@@ -43,6 +43,39 @@ static const char* commands[] = {
 /* этап 10: программы грузятся на 1 МиБ — выше stage2 (0x10000)
    и ядра (0x20000), коллизий нет */
 #define OFS_PROG_ADDR 0x100000u
+
+/* ===== этап 12: ABI программ =====
+   При входе программа получает: EBX = адрес таблицы функций ядра,
+   ECX = версия ABI. Вызовы cdecl: аргументы в стеке, результат в EAX.
+   Функции - уже существующие в ядре; таблица лишь публикует их.
+   Программные заголовки: osapi.h (для C-программ), hello2.asm (пример asm). */
+#define OS_ABI_VERSION   1
+#define OS_ABI_FN_COUNT 10
+/* 0 print_string (CP866), 1 rus_print (UTF-8), 2 print_uint, 3 print_int,
+   4 print_hex, 5 ofs_read_buf, 6 ofs_write, 7 ofs_delete,
+   8 ofs_free_blocks, 9 uptime_seconds */
+const void* g_abi_table[OS_ABI_FN_COUNT];
+const unsigned int g_abi_version = OS_ABI_VERSION;
+
+extern void abi_call_program(void *prog);  /* boot/core_start.asm:
+                                              ставит EBX/ECX и вызывает prog */
+
+static unsigned int uptime_seconds(void){
+    return (unsigned int)(get_ticks() / 100);   /* таймер 100 Гц */
+}
+
+static void init_abi_table(void){
+    g_abi_table[0] = (const void*)print_string;
+    g_abi_table[1] = (const void*)rus_print;
+    g_abi_table[2] = (const void*)print_uint;
+    g_abi_table[3] = (const void*)print_int;
+    g_abi_table[4] = (const void*)print_hex;
+    g_abi_table[5] = (const void*)ofs_read_buf;
+    g_abi_table[6] = (const void*)ofs_write;
+    g_abi_table[7] = (const void*)ofs_delete;
+    g_abi_table[8] = (const void*)ofs_free_blocks;
+    g_abi_table[9] = (const void*)uptime_seconds;
+}
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
    сравнивать удобнее там же. Заполняются один раз при старте. */
@@ -236,6 +269,7 @@ void shell_main() {
     print_char('>');
     reset_color();
     init_timer(100);
+    init_abi_table();          /* этап 12: опубликовать функции ядра программам */
     asm volatile("sti");
 
     for (;;) {
@@ -533,9 +567,10 @@ void shell_main() {
                             rus_print(" (");
                             print_uint(psize);
                             rus_print(" байт)...\n");
-                            void (*prog)(void) = (void*)OFS_PROG_ADDR;
-                            prog();                          /* плоская GDT: программа
-                                                                как обычная функция */
+                            /* этап 12: запуск через трамплин - программа
+                               получает EBX = таблицу ABI, ECX = версию ABI
+                               (плоская GDT, программа как обычная функция) */
+                            abi_call_program((void*)OFS_PROG_ADDR);
                             set_color(FG_CYAN, BLACK_ATTR);
                             rus_print("программа завершилась\n");
                             reset_color();
