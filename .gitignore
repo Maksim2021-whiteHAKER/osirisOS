@@ -6,10 +6,11 @@
 \target
 *.o
 *.elf
-*.bin
+# *.bin
 *.img
 
 # Временные файлы загрузчика
+bootloader/build/x86_64/*.bin
 bootloader/src/arch/x86_64/*.bin
 bootloader/src/arch/x86_64/*.o
 bootloader/src/arch/x86_64/*.elf
