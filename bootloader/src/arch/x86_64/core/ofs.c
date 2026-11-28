@@ -1,5 +1,7 @@
 // x86_64/core/ofs.c
-// ОФС - Осирис Файловая Система. Этап 5: чтение, запись, удаление, допись, инфо.
+// ОФС - Осирис Файловая Система. Этапы 1-10: разметка, чтение, запись, удаление,
+// допись, инфо, копирование, переименование, проверка целостности, исправление,
+// загрузка программ.
 // Файлы лежат в области данных ПОДРЯД от своего стартового блока
 // (без цепочек - как FAT, только проще). Имена хранятся на диске в UTF-8,
 // на экране и во вводе - CP866, конвертация через console.c.
@@ -115,6 +117,42 @@ int ofs_read(const char *name){
             done += n;
         }
         if (size == 0) rus_print("(файл пустой)\n");
+        return (int)size;
+    }
+    return -1;   // файла с таким именем нет
+}
+
+/* Этап 10: загрузка файла-программы из ОФС в память.
+   Читает все блоки файла подряд в load_addr (блок = сектор = 512 байт).
+   Сама функция молчит - все сообщения на стороне команды запустить.
+   Возвращает размер файла в байтах или минус:
+   -1 не готова / файла нет / ошибка диска,
+   -2 запись битая (старт+блоки за границей данных),
+   -4 файл больше OFS_RUN_MAX - запускать нельзя */
+int ofs_load(const char *name, uint32_t load_addr, uint32_t *out_size){
+    if (!ofs_ready) return -1;
+
+    for (int i = 0; i < OFS_TABLE_ENTRIES; i++){
+        const uint8_t *e = ofs_table + i * OFS_ENTRY_SIZE;
+        if (e[56] != OFS_FLAG_FILE) continue;
+
+        char name_cp[OFS_NAME_SIZE];
+        utf8_to_cp866_str((const char*)e, name_cp, OFS_NAME_SIZE);
+        if (ofs_strcmp(name_cp, name) != 0) continue;
+
+        // файл найден: грузим блоки один за другим
+        uint32_t size   = rd32(e + 48);
+        uint32_t start  = rd32(e + 52);
+        uint32_t blocks = (size + OFS_BLOCK_SIZE - 1) / OFS_BLOCK_SIZE;
+        if (out_size) *out_size = size;
+
+        if (start >= ofs_total_blocks || start + blocks > ofs_total_blocks) return -2;
+        if (size > OFS_RUN_MAX) return -4;
+
+        for (uint32_t b = 0; b < blocks; b++){
+            if (ata_read_sector(OFS_DATA_LBA + start + b,
+                                (uint8_t*)(load_addr + b * OFS_BLOCK_SIZE)) != 0) return -1;
+        }
         return (int)size;
     }
     return -1;   // файла с таким именем нет

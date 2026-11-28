@@ -12,13 +12,13 @@
    Русский синоним = та же команда со сдвигом +CMD_COUNT_EN. */
 static const char* commands[] = {
     "ver", "clr", "help", "echo", "uptime", "ls", "cat", "write", "delete", "append", "info", "copy", "rename", "check",
-    "fix",
+    "fix", "run",
     "версия", "очистить", "помощь", "эхо", "время_работы", "дир", "читать", "записать", "удалить", "дополнить", "инфо",
-    "копировать", "переименовать", "проверить", "исправить",
+    "копировать", "переименовать", "проверить", "исправить", "запустить",
     0
 };
 
-#define KERNEL_VERSION "1.1.4"
+#define KERNEL_VERSION "1.1.5"
 
 #define CMD_VER    0
 #define CMD_CLR    1
@@ -35,9 +35,14 @@ static const char* commands[] = {
 #define CMD_RENAME 12
 #define CMD_CHECK  13
 #define CMD_FIX    14
-#define CMD_COUNT_EN 15     /* сколько команд в верхнем ряду */
-#define CMD_MAX      30     /* всего команд (лат + рус) */
+#define CMD_RUN    15
+#define CMD_COUNT_EN 16     /* сколько команд в верхнем ряду */
+#define CMD_MAX      32     /* всего команд (лат + рус) */
 #define CMD_BUF      16     /* размер CP866-копии (до 15 байт) */
+
+/* этап 10: программы грузятся на 1 МиБ — выше stage2 (0x10000)
+   и ядра (0x20000), коллизий нет */
+#define OFS_PROG_ADDR 0x100000u
 
 /* CP866-копии команд: ввод с клавиатуры приходит в CP866,
    сравнивать удобнее там же. Заполняются один раз при старте. */
@@ -64,7 +69,7 @@ int start_with(const char* str, const char* prefix){
     return 1;
 }
 
-/* точное совпадение ввода с командой; возвращает канонический номер 0..10 или -1 */
+/* точное совпадение ввода с командой; возвращает канонический номер 0..15 или -1 */
 static int find_command(const char* input){
     for (int i = 0; i < cmd_total; i++){
         if (int_stringcmp(input, cmd_cp866[i]) == 0){
@@ -112,6 +117,13 @@ static int copy_prefix_len(const char* input){
 static int rename_prefix_len(const char* input){
     if (start_with(input, "rename")) return 6;
     if (start_with(input, cmd_cp866[CMD_RENAME + CMD_COUNT_EN])) return 13;
+    return 0;
+}
+
+/* длина префикса run/запустить во вводе (0 = это не run) */
+static int run_prefix_len(const char* input){
+    if (start_with(input, "run")) return 3;
+    if (start_with(input, cmd_cp866[CMD_RUN + CMD_COUNT_EN])) return 9;
     return 0;
 }
 
@@ -241,6 +253,7 @@ void shell_main() {
                 int ip = info_prefix_len(inputbuf);
                 int kyp = copy_prefix_len(inputbuf);
                 int rp = rename_prefix_len(inputbuf);
+                int runp = run_prefix_len(inputbuf);
                 uint32_t isize = 0, istart = 0, iblocks = 0;
 
                 if (ep > 0){                        /* echo / эхо */
@@ -486,6 +499,46 @@ void shell_main() {
                             reset_color();
                             print_string(name1);
                             print_string("\n");
+                        }
+                    }
+                } else if (cmd == CMD_RUN && runp == 0){   /* run / запустить без имени */
+                    rus_print("Использование: запустить имя_файла\n");
+                } else if (runp > 0){                       /* run / запустить + имя */
+                    int offset = runp;
+                    if (input_len > offset && inputbuf[offset] == ' ') offset++;
+                    if (offset >= input_len){
+                        rus_print("Использование: запустить имя_файла\n");
+                    } else {
+                        uint32_t psize = 0;
+                        int pres = ofs_load(inputbuf + offset, OFS_PROG_ADDR, &psize);
+                        if (pres < 0){
+                            set_color(FG_RED, BLACK_ATTR);
+                            if (pres == -2){
+                                rus_print("запись файла битая (за границей данных): ");
+                            } else if (pres == -4){
+                                rus_print("файл слишком большой для запуска: ");
+                            } else {
+                                rus_print("файл не найден или ОФС не готова: ");
+                            }
+                            reset_color();
+                            print_string(inputbuf + offset);
+                            print_string("\n");
+                        } else if (psize == 0){
+                            rus_print("файл пустой - запускать нечего\n");
+                        } else {
+                            set_color(FG_CYAN, BLACK_ATTR);
+                            rus_print("запуск ");
+                            reset_color();
+                            print_string(inputbuf + offset);
+                            rus_print(" (");
+                            print_uint(psize);
+                            rus_print(" байт)...\n");
+                            void (*prog)(void) = (void*)OFS_PROG_ADDR;
+                            prog();                          /* плоская GDT: программа
+                                                                как обычная функция */
+                            set_color(FG_CYAN, BLACK_ATTR);
+                            rus_print("программа завершилась\n");
+                            reset_color();
                         }
                     }
                 } else if (cmd == CMD_CHECK){        /* check / проверить */
